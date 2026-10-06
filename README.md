@@ -53,6 +53,24 @@ Every automated action validates results:
 
 ---
 
+## 📥 Download Antigravity CLI (`agy`)
+
+Orion seamlessly connects with **Google Antigravity CLI (`agy`)** to carry out complex natural language tasks.
+
+### Install `agy` on Windows:
+```powershell
+# Install via official PowerShell script
+irm https://antigravity.google/install.ps1 | iex
+```
+*Alternatively, download the Windows installer from [https://antigravity.google/docs/cli](https://antigravity.google/docs/cli).*
+
+### Verify CLI:
+```powershell
+agy --version
+```
+
+---
+
 ## 📦 Installation & Setup
 
 ### 1. Clone the Repository
@@ -61,21 +79,41 @@ git clone https://github.com/nividharan/Orion--V2.0-Nebula.git
 cd Orion--V2.0-Nebula
 ```
 
-### 2. Install Dependencies
+### 2. Install Required Python Packages
 ```powershell
 pip install -r requirements.txt
 ```
 
-### 3. Start the Background Perception Server (Optional)
+---
+
+## 🚀 How to Start Orion
+
+You can launch and interact with Orion in two ways:
+
+### Method 1: Start the Live Perception Server (Recommended)
+Starting the background server gives you sub-10ms response times and live screen streaming:
 ```powershell
 python desktop_controller.py api --port 8765
 ```
-> Open `http://localhost:8765/` in your browser to view the real-time screen stream and workstation status dashboard.
-
-### 4. Verify Installation
+*Or using the Orion wrapper:*
 ```powershell
-orion version
-orion quick
+orion api
+```
+> Once running, open **`http://localhost:8765/`** in your browser to view the live screen video stream and real-time workstation status dashboard.
+
+### Method 2: Run Commands Directly
+You can also run commands straight from your terminal:
+```powershell
+orion version                                   # Check Orion version
+orion quick                                     # Instant screen status check
+orion speak "Orion online"                      # Test voice synthesizer
+orion browse "https://github.com"               # Test browser launcher
+```
+
+### (Optional) Add Orion to Your System PATH
+To type `orion` from any terminal folder on your machine:
+```powershell
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$PWD", "User")
 ```
 
 ---
