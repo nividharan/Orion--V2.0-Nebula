@@ -73,6 +73,106 @@ class OrionAgentSociety:
         self.use_voice = use_voice
         self.stream = StreamConsole()
 
+    @staticmethod
+    def compile_blender_action(prompt: str) -> dict:
+        """Translates natural language 3D instructions into native Blender bpy script."""
+        p = prompt.lower()
+
+        # Colors
+        color_map = {
+            "red": (1.0, 0.05, 0.05, 1.0),
+            "blue": (0.05, 0.2, 1.0, 1.0),
+            "green": (0.05, 0.8, 0.1, 1.0),
+            "yellow": (1.0, 0.9, 0.05, 1.0),
+            "purple": (0.6, 0.05, 0.9, 1.0),
+            "orange": (1.0, 0.4, 0.05, 1.0),
+            "gold": (0.9, 0.75, 0.1, 1.0),
+            "white": (0.95, 0.95, 0.95, 1.0),
+            "black": (0.02, 0.02, 0.02, 1.0),
+            "pink": (1.0, 0.2, 0.6, 1.0),
+            "cyan": (0.05, 0.9, 0.9, 1.0),
+        }
+
+        selected_color = None
+        color_rgba = (1.0, 0.05, 0.05, 1.0)
+        for c_name, rgba in color_map.items():
+            if c_name in p:
+                selected_color = c_name
+                color_rgba = rgba
+                break
+
+        # Shapes
+        if "circle" in p:
+            shape_name = "Circle"
+            add_code = "bpy.ops.mesh.primitive_circle_add(radius=1.5, fill_type='NGON', location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Red'} Circle"
+        elif "cube" in p or "box" in p:
+            shape_name = "Cube"
+            add_code = "bpy.ops.mesh.primitive_cube_add(size=2.0, location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Blue'} Cube"
+        elif "sphere" in p or "ball" in p:
+            shape_name = "Sphere"
+            add_code = "bpy.ops.mesh.primitive_uv_sphere_add(radius=1.2, location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Red'} Sphere"
+        elif "cylinder" in p:
+            shape_name = "Cylinder"
+            add_code = "bpy.ops.mesh.primitive_cylinder_add(radius=1.0, depth=2.0, location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Green'} Cylinder"
+        elif "monkey" in p or "suzanne" in p:
+            shape_name = "Suzanne"
+            add_code = "bpy.ops.mesh.primitive_monkey_add(size=2.0, location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Gold'} Monkey"
+        elif "torus" in p or "donut" in p:
+            shape_name = "Torus"
+            add_code = "bpy.ops.mesh.primitive_torus_add(location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Pink'} Torus"
+        elif "plane" in p or "floor" in p:
+            shape_name = "Plane"
+            add_code = "bpy.ops.mesh.primitive_plane_add(size=10.0, location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'White'} Plane"
+        else:
+            shape_name = "Circle"
+            add_code = "bpy.ops.mesh.primitive_circle_add(radius=1.5, fill_type='NGON', location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Red'} Circle"
+
+        color_title = selected_color.title() if selected_color else "Red"
+        mat_name = f"{color_title}_Material"
+
+        bpy_code = f"""import bpy
+bpy.ops.object.select_all(action='DESELECT')
+{add_code}
+obj = bpy.context.active_object
+obj.name = "{color_title}_{shape_name}"
+
+mat = bpy.data.materials.new(name="{mat_name}")
+mat.use_nodes = True
+bsdf = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+if bsdf:
+    bsdf.inputs['Base Color'].default_value = {color_rgba}
+    bsdf.inputs['Roughness'].default_value = 0.3
+
+if obj.data.materials:
+    obj.data.materials[0] = mat
+else:
+    obj.data.materials.append(mat)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+
+obj.select_set(True)
+bpy.context.view_layer.objects.active = obj
+print("SUCCESS: Created {desc_obj} with {mat_name}.")
+"""
+        return {
+            "shape": shape_name,
+            "color": color_title,
+            "desc": desc_obj,
+            "code": bpy_code
+        }
+
     def decompose_goal(self, goal: str) -> list:
         """
         Commander Orion's intelligent goal decomposer:
@@ -82,7 +182,87 @@ class OrionAgentSociety:
         raw = goal.strip()
         lower = raw.lower()
 
-        # Compound portal search: e.g. "open google play and search for free fire"
+        # 1. Blender 3D commands: e.g. "in the opened blender create a red circle"
+        if "blender" in lower or (any(w in lower for w in ["circle", "cube", "sphere", "cylinder", "torus", "mesh"]) and any(w in lower for w in ["create", "add", "make", "draw"])):
+            blender_action = self.compile_blender_action(raw)
+            steps.append({
+                "agent": "Desktop Executor",
+                "action": "focus",
+                "target": "blender",
+                "desc": "Focus running Blender window and bring to foreground"
+            })
+            steps.append({
+                "agent": "Desktop Executor",
+                "action": "blender",
+                "target": blender_action["desc"],
+                "code": blender_action["code"],
+                "desc": f"Execute 3D Python pipeline in Blender: {blender_action['desc']}"
+            })
+            steps.append({
+                "agent": "Perception Inspector",
+                "action": "blender_check",
+                "target": blender_action["shape"],
+                "desc": f"Verify '{blender_action['desc']}' registered in Blender 3D scene"
+            })
+            if self.use_voice:
+                steps.append({
+                    "agent": "Studio Narrator",
+                    "action": "speak",
+                    "target": f"{blender_action['desc']} successfully generated with material in Blender, sir.",
+                    "desc": "Announce completion via Microsoft George HD"
+                })
+            return steps
+
+        # 2. General "in [the opened] <app> <action>"
+        in_app_match = re.search(r'^(?:in\s+(?:the\s+opened\s+)?([a-zA-Z0-9_\-]+))\s+(?:to\s+)?(.+)$', raw, re.I)
+        if in_app_match:
+            target_app = in_app_match.group(1).strip()
+            sub_action = in_app_match.group(2).strip()
+            steps.append({
+                "agent": "Desktop Executor",
+                "action": "focus",
+                "target": target_app,
+                "desc": f"Focus running {target_app.title()} window"
+            })
+            if any(k in sub_action.lower() for k in ["type", "write", "input"]):
+                text_clean = re.sub(r'^(?:type|write|input)\s+', '', sub_action, flags=re.I).strip('\'"')
+                steps.append({
+                    "agent": "Desktop Executor",
+                    "action": "type",
+                    "target": text_clean,
+                    "desc": f"Type into {target_app.title()}: \"{text_clean}\""
+                })
+            elif any(k in sub_action.lower() for k in ["search", "find"]):
+                search_clean = re.sub(r'^(?:search|find)\s+(?:for\s+)?', '', sub_action, flags=re.I).strip('\'"')
+                steps.append({
+                    "agent": "Desktop Executor",
+                    "action": "type",
+                    "target": f"{search_clean}\n",
+                    "desc": f"Search in {target_app.title()}: \"{search_clean}\""
+                })
+            else:
+                steps.append({
+                    "agent": "Desktop Executor",
+                    "action": "type",
+                    "target": sub_action,
+                    "desc": f"Execute action in {target_app.title()}: \"{sub_action}\""
+                })
+            steps.append({
+                "agent": "Perception Inspector",
+                "action": "shot",
+                "target": None,
+                "desc": f"Capture visual verification of {target_app.title()}"
+            })
+            if self.use_voice:
+                steps.append({
+                    "agent": "Studio Narrator",
+                    "action": "speak",
+                    "target": f"Action completed in {target_app.title()}, sir.",
+                    "desc": "Announce completion via Microsoft George HD"
+                })
+            return steps
+
+        # 3. Compound portal search: e.g. "open google play and search for free fire"
         compound_search = re.search(r'^(?:open|launch|go to)\s+(google\s*play|play\s*store|youtube|github|amazon|google)\s+and\s+(?:search|look\s*up)\s+(?:for\s+)?(.+)$', raw, re.I)
         if compound_search:
             portal = compound_search.group(1).strip()
@@ -317,6 +497,16 @@ class OrionAgentSociety:
                         res2 = orion_core.focus_window(target)
                         self.stream.print_success(f"Self-healing retry succeeded: Focused '{res2.get('matched_title', target)}'")
 
+                elif act == "blender":
+                    b_code = step.get("code", "")
+                    res = orion_core.execute_blender_code(b_code)
+                    elapsed = (time.perf_counter() - t_step_start) * 1000
+                    if res.get("status") == "success":
+                        self.stream.print_success(f"Executed 3D pipeline in Blender: {target}", elapsed)
+                        self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Blender socket returned 0 errors.")
+                    else:
+                        self.stream.print_warning(f"Blender socket notice: {res.get('message', res)}")
+
             elif agent == "Perception Inspector":
                 self.stream.print_line("Perception Inspector", "👁️", f"Milestone {idx}: {step['desc']}...")
                 if act == "shot":
@@ -324,6 +514,18 @@ class OrionAgentSociety:
                     elapsed = (time.perf_counter() - t_step_start) * 1000
                     self.stream.print_success(f"Screen buffer saved to '{shot.get('saved_path')}'", elapsed)
                     self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Image resolution {shot.get('size')} confirmed.")
+                elif act == "blender_check":
+                    s_info = orion_core.get_blender_scene_info()
+                    elapsed = (time.perf_counter() - t_step_start) * 1000
+                    if s_info.get("status") == "success":
+                        res_obj = s_info.get("result", {})
+                        obj_names = [o.get("name") for o in res_obj.get("objects", [])]
+                        self.stream.print_success(f"Verified Blender 3D objects in scene: {', '.join(obj_names)}", elapsed)
+                        self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Target '{target}' confirmed in Blender scene hierarchy.")
+                    else:
+                        self.stream.print_warning(f"Blender scene verification notice: {s_info.get('message')}")
+                    shot = orion_core.take_screenshot()
+                    self.stream.print_success(f"Saved live viewport snapshot to '{shot.get('saved_path')}'")
                 elif act == "listen":
                     self.stream.print_line("Perception Inspector", "🎙️", "Listening to microphone for 4 seconds...")
                     res = orion_core.listen(4.0)

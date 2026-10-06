@@ -357,13 +357,14 @@ def find_installed_application(app_name: str) -> dict:
                 "window_hint": app_name
             }
 
-    # Fallback: start command
+    # Fallback: start command (only for single-word command or existing file path)
+    is_safe_cmd = (" " not in app_name.strip()) or os.path.exists(app_name)
     return {
         "found": False,
         "name": app_name,
         "appid": None,
         "path": None,
-        "launch_cmd": f"start {app_name}",
+        "launch_cmd": f'start "" "{app_name}"' if is_safe_cmd else None,
         "source": "fallback_start",
         "window_hint": app_name
     }
@@ -600,6 +601,50 @@ def preflight_check(items: list = None) -> dict:
         "screen_resolution": list(pyautogui.size()),
         "desktop_session": "attached"
     }
+
+
+# ==============================================================================
+# BLENDER 3D SOCKET ENGINE (PORT 9876)
+# ==============================================================================
+
+def execute_blender_code(code: str, port: int = 9876) -> dict:
+    """Executes Python code directly in the user's running Blender instance via port 9876."""
+    import socket
+    start_time = time.time()
+    try:
+        s = socket.socket()
+        s.settimeout(4.0)
+        s.connect(('127.0.0.1', port))
+        payload = json.dumps({'type': 'execute_code', 'params': {'code': code}}).encode('utf-8')
+        s.sendall(payload)
+        resp_data = s.recv(32768).decode('utf-8')
+        s.close()
+        resp = json.loads(resp_data)
+        elapsed = round((time.time() - start_time) * 1000, 2)
+        resp["elapsed_ms"] = elapsed
+        return resp
+    except Exception as e:
+        return {"status": "error", "message": f"Blender connection error on port {port}: {e}"}
+
+
+def get_blender_scene_info(port: int = 9876) -> dict:
+    """Queries active Blender scene hierarchy and objects via port 9876."""
+    import socket
+    start_time = time.time()
+    try:
+        s = socket.socket()
+        s.settimeout(3.0)
+        s.connect(('127.0.0.1', port))
+        payload = json.dumps({'type': 'get_scene_info'}).encode('utf-8')
+        s.sendall(payload)
+        resp_data = s.recv(32768).decode('utf-8')
+        s.close()
+        resp = json.loads(resp_data)
+        elapsed = round((time.time() - start_time) * 1000, 2)
+        resp["elapsed_ms"] = elapsed
+        return resp
+    except Exception as e:
+        return {"status": "error", "message": f"Blender scene query error: {e}"}
 
 
 # ==============================================================================
@@ -926,7 +971,15 @@ def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec:
 
     resolved = find_installed_application(app_name)
     window_title_hint = resolved.get("window_hint", app_name)
-    launch_cmd = resolved.get("launch_cmd", f"start {app_name}")
+    launch_cmd = resolved.get("launch_cmd")
+    if not launch_cmd:
+        return {
+            "status": "error",
+            "success": False,
+            "action": "launch_application",
+            "app": app_name,
+            "error": f"Cannot launch '{app_name}': target is not a recognized executable, application, or system path."
+        }
     if extra_args:
         launch_cmd = f"{launch_cmd} {extra_args}"
     short_hint = app_lower.replace(".exe", "")
