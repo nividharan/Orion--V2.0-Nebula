@@ -1379,15 +1379,97 @@ def execute_task(task_spec: dict) -> dict:
 # VOICE & AUDIO (TTS + STT)
 # ==============================================================================
 
-def speak(text: str, rate: int = 0, volume: int = 100) -> dict:
-    """Speaks text through Windows SAPI voice synthesizer."""
+def get_available_voices() -> list:
+    """
+    Discovers all high-fidelity TTS voices across both Windows SAPI5 and Windows OneCore.
+    Returns list of dicts with name, description, engine, and token reference.
+    """
+    voices = []
+    import win32com.client
+
+    # 1. Discover OneCore high-definition studio voices (George, Susan, Heera, Ravi)
+    try:
+        cat = win32com.client.Dispatch("SAPI.SpObjectTokenCategory")
+        cat.SetId(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech_OneCore\Voices", False)
+        for token in cat.EnumerateTokens():
+            desc = token.GetDescription()
+            name = desc.split(" - ")[0].strip() if " - " in desc else desc
+            clean_name = name.replace("Microsoft ", "").strip()
+            voices.append({
+                "id": clean_name.lower(),
+                "name": name,
+                "clean_name": clean_name,
+                "description": desc,
+                "engine": "Windows OneCore (HD)",
+                "token": token
+            })
+    except Exception:
+        pass
+
+    # 2. Discover SAPI5 desktop voices (Zira, Hazel)
+    try:
+        speaker = win32com.client.Dispatch("SAPI.SpVoice")
+        for token in speaker.GetVoices():
+            desc = token.GetDescription()
+            name = desc.split(" - ")[0].strip() if " - " in desc else desc
+            clean_name = name.replace("Microsoft ", "").replace(" Desktop", "").strip()
+            if not any(v["description"] == desc for v in voices):
+                voices.append({
+                    "id": clean_name.lower(),
+                    "name": name,
+                    "clean_name": clean_name,
+                    "description": desc,
+                    "engine": "Windows SAPI5",
+                    "token": token
+                })
+    except Exception:
+        pass
+
+    return voices
+
+
+def speak(text: str, voice: str = "George", rate: int = 0, volume: int = 100) -> dict:
+    """
+    Speaks text through Windows voice synthesizer with professional studio voices.
+    Defaults to 'Microsoft George' (deep, authoritative executive AI persona).
+    Supports 'George', 'Susan', 'Zira', 'Heera', 'Ravi', 'Hazel'.
+    """
     try:
         import win32com.client
+        available = get_available_voices()
+        target_voice_obj = None
+
+        if voice:
+            q = voice.lower().strip()
+            for v in available:
+                if q in v["id"] or q in v["name"].lower() or q in v["description"].lower():
+                    target_voice_obj = v
+                    break
+
+        # Fallback to George or first available if requested voice not found
+        if not target_voice_obj:
+            for v in available:
+                if "george" in v["id"]:
+                    target_voice_obj = v
+                    break
+        if not target_voice_obj and available:
+            target_voice_obj = available[0]
+
         speaker = win32com.client.Dispatch("SAPI.SpVoice")
+        if target_voice_obj and "token" in target_voice_obj:
+            speaker.Voice = target_voice_obj["token"]
+
         speaker.Rate = rate
         speaker.Volume = volume
         speaker.Speak(text)
-        return {"status": "ok", "action": "speak", "text": text}
+
+        return {
+            "status": "ok",
+            "action": "speak",
+            "text": text,
+            "voice": target_voice_obj["name"] if target_voice_obj else "Default",
+            "engine": target_voice_obj["engine"] if target_voice_obj else "SAPI"
+        }
     except Exception as e:
         return {"status": "error", "action": "speak", "error": str(e)}
 
@@ -1625,7 +1707,7 @@ class MonitorHTTPHandler(http.server.BaseHTTPRequestHandler):
             elif act in ("open", "launch"):
                 result = launch_application(payload.get("app", ""), extra_args=payload.get("extra_args", payload.get("args", "")))
             elif act == "speak":
-                result = speak(payload.get("text", ""))
+                result = speak(payload.get("text", ""), voice=payload.get("voice", "George"), rate=int(payload.get("rate", 0)), volume=int(payload.get("volume", 100)))
             else:
                 result = {"status": "error", "error": f"Unknown action: {act}"}
 
@@ -1636,7 +1718,12 @@ class MonitorHTTPHandler(http.server.BaseHTTPRequestHandler):
             result = focus_window(payload.get("title", ""), auto_launch=payload.get("auto_launch", True))
 
         elif self.path in ("/speak", "/api/speak"):
-            result = speak(payload.get("text", ""))
+            result = speak(payload.get("text", ""), voice=payload.get("voice", "George"), rate=int(payload.get("rate", 0)), volume=int(payload.get("volume", 100)))
+
+        elif self.path in ("/voices", "/api/voices"):
+            voices = get_available_voices()
+            clean_list = [{k: v for k, v in item.items() if k != "token"} for item in voices]
+            result = {"count": len(clean_list), "default": "Microsoft George (HD)", "voices": clean_list}
 
         elif self.path in ("/batch", "/api/batch"):
             steps = payload.get("steps", [])
@@ -1770,7 +1857,19 @@ class MonitorHTTPHandler(http.server.BaseHTTPRequestHandler):
             parsed = urllib.parse.urlparse(self.path)
             params = urllib.parse.parse_qs(parsed.query)
             text = params.get("text", params.get("t", [""]))[0]
-            result = speak(text)
+            voice = params.get("voice", params.get("v", ["George"]))[0]
+            result = speak(text, voice=voice)
+            data = json.dumps(result, indent=2).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path in ("/voices", "/api/voices"):
+            voices = get_available_voices()
+            clean_list = [{k: v for k, v in item.items() if k != "token"} for item in voices]
+            result = {"count": len(clean_list), "default": "Microsoft George (HD)", "voices": clean_list}
             data = json.dumps(result, indent=2).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -2088,6 +2187,10 @@ def main():
     p_spk = subparsers.add_parser("speak")
     p_spk.add_argument("text_pos", nargs="*", default=None, help="Message text to speak (positional)")
     p_spk.add_argument("--text", default=None, help="Message text to speak")
+    p_spk.add_argument("--voice", "-v", default="George", help="Voice name (George, Susan, Zira, Heera, Ravi, Hazel)")
+
+    # voices
+    subparsers.add_parser("voices", aliases=["list_voices"], help="List installed professional TTS voices")
 
     # transcribe
     p_tra = subparsers.add_parser("transcribe")
@@ -2231,9 +2334,13 @@ def main():
     elif args.command == "focus":
         title_target = args.title or (" ".join(args.title_pos).strip() if args.title_pos else "")
         result = focus_window(title_target)
+    elif args.command in ("voices", "list_voices"):
+        voices = get_available_voices()
+        clean_list = [{k: v for k, v in item.items() if k != "token"} for item in voices]
+        result = {"count": len(clean_list), "default": "Microsoft George (HD)", "voices": clean_list}
     elif args.command == "speak":
         text_target = args.text or (" ".join(args.text_pos).strip() if args.text_pos else "")
-        result = speak(text_target)
+        result = speak(text_target, voice=args.voice)
     elif args.command == "transcribe":
         result = transcribe_audio(args.audio)
     else:

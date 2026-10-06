@@ -59,9 +59,23 @@ if ($firstArg -eq "focus" -and $ArgsList.Count -ge 2) {
 
 if ($firstArg -eq "speak" -and $ArgsList.Count -ge 2) {
     try {
-        $msg = ($ArgsList[1..($ArgsList.Count - 1)] -join " ").Replace("--text", "").Trim()
-        $body = @{ action = "speak"; text = $msg } | ConvertTo-Json
-        $res = Invoke-RestMethod -Uri "$ApiBase/action" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 2 -ErrorAction Stop
+        $rawMsg = ($ArgsList[1..($ArgsList.Count - 1)] -join " ")
+        $voiceChoice = "George"
+        if ($rawMsg -match '(?:--voice|-v)\s+([a-zA-Z]+)') {
+            $voiceChoice = $Matches[1]
+            $rawMsg = $rawMsg -replace '(?:--voice|-v)\s+[a-zA-Z]+', ''
+        }
+        $msg = $rawMsg.Replace("--text", "").Trim()
+        $body = @{ action = "speak"; text = $msg; voice = $voiceChoice } | ConvertTo-Json
+        $res = Invoke-RestMethod -Uri "$ApiBase/action" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 10 -ErrorAction Stop
+        $res | ConvertTo-Json -Depth 5
+        return
+    } catch {}
+}
+
+if ($firstArg -in @("voices", "list_voices")) {
+    try {
+        $res = Invoke-RestMethod -Uri "$ApiBase/voices" -TimeoutSec 2 -ErrorAction Stop
         $res | ConvertTo-Json -Depth 5
         return
     } catch {}
@@ -105,7 +119,7 @@ $controllerCmds = @(
     "shot", "screenshot", "click", "hover", 
     "double_click", "right_click", "move", "drag", "scroll", "pos", 
     "type", "paste", "press", "hotkey", "list_windows", "windows", 
-    "active_window", "focus", "speak", "transcribe", "listen",
+    "active_window", "focus", "speak", "voices", "list_voices", "transcribe", "listen",
     "status", "api", "monitor", "server", "task"
 )
 
