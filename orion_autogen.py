@@ -82,6 +82,45 @@ class OrionAgentSociety:
         raw = goal.strip()
         lower = raw.lower()
 
+        # Compound portal search: e.g. "open google play and search for free fire"
+        compound_search = re.search(r'^(?:open|launch|go to)\s+(google\s*play|play\s*store|youtube|github|amazon|google)\s+and\s+(?:search|look\s*up)\s+(?:for\s+)?(.+)$', raw, re.I)
+        if compound_search:
+            portal = compound_search.group(1).strip()
+            term = compound_search.group(2).strip()
+            import urllib.parse
+            if "play" in portal.lower():
+                target_url = f"https://play.google.com/store/search?q={urllib.parse.quote_plus(term)}&c=apps"
+            elif "youtube" in portal.lower():
+                target_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(term)}"
+            elif "github" in portal.lower():
+                target_url = f"https://github.com/search?q={urllib.parse.quote_plus(term)}"
+            elif "amazon" in portal.lower():
+                target_url = f"https://www.amazon.com/s?k={urllib.parse.quote_plus(term)}"
+            else:
+                target_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(term)}"
+
+            steps.append({
+                "agent": "Desktop Executor",
+                "action": "browse",
+                "target": target_url,
+                "browser": "chrome",
+                "desc": f"Launch Chrome and search {portal.title()} for '{term}'"
+            })
+            steps.append({
+                "agent": "Perception Inspector",
+                "action": "shot",
+                "target": None,
+                "desc": f"Capture visual verification of {portal.title()} search results"
+            })
+            if self.use_voice:
+                steps.append({
+                    "agent": "Studio Narrator",
+                    "action": "speak",
+                    "target": f"Navigated to {portal.title()} and retrieved search results for {term}.",
+                    "desc": "Announce completion via Microsoft George HD"
+                })
+            return steps
+
         # Split multiple actions by 'and', 'then', commas, or semicolons
         clauses = re.split(r'\s*(?:,|;|then|\band\b)\s*', raw)
         clauses = [c.strip() for c in clauses if c.strip()]

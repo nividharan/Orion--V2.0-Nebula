@@ -816,6 +816,60 @@ def get_active_window() -> dict:
         "is_visible": bool(win32gui.IsWindowVisible(hwnd)) if hwnd else False
     }
 
+def force_window_to_foreground(hwnd: int) -> bool:
+    """Forces target window to active foreground, bypassing Windows focus-stealing locks."""
+    if not hwnd:
+        return False
+    try:
+        attach_to_default_desktop()
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        
+        # 1. Un-minimize if iconic
+        if win32gui.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        else:
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            
+        fore_hwnd = user32.GetForegroundWindow()
+        if fore_hwnd == hwnd:
+            return True
+            
+        cur_thread = kernel32.GetCurrentThreadId()
+        fore_thread = user32.GetWindowThreadProcessId(fore_hwnd, None) if fore_hwnd else 0
+        target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+        
+        # Unlock focus lock
+        user32.SystemParametersInfoW(0x2001, 0, 0, 2)  # SPI_SETFOREGROUNDLOCKTIMEOUT
+        user32.AllowSetForegroundWindow(-1)            # ASFW_ANY
+        
+        # Attach threads
+        if fore_thread and fore_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, fore_thread, True)
+        if target_thread and target_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, target_thread, True)
+            
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        user32.SwitchToThisWindow(hwnd, True)
+        
+        # Alt-key pulse trick for resistant Windows versions
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.keybd_event(0x12, 0, 2, 0)
+        user32.SetForegroundWindow(hwnd)
+        
+        if fore_thread and fore_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, fore_thread, False)
+        if target_thread and target_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, target_thread, False)
+            
+        time.sleep(0.08)
+        return user32.GetForegroundWindow() == hwnd
+    except Exception:
+        return False
+
+
 def focus_window(query: str, capture_after: bool = False, auto_launch: bool = False) -> dict:
     """Restores and brings matched window to front with verified foreground activation."""
     attach_to_default_desktop()
@@ -838,39 +892,12 @@ def focus_window(query: str, capture_after: bool = False, auto_launch: bool = Fa
 
     if matched:
         hwnd, title = matched
-        # If minimized, restore it
-        if win32gui.IsIconic(hwnd):
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            time.sleep(0.08)
-        else:
-            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-
-        # AttachThreadInput trick to bypass Windows focus-stealing lock
-        try:
-            fore_hwnd = win32gui.GetForegroundWindow()
-            if fore_hwnd and fore_hwnd != hwnd:
-                fore_thread = win32process.GetWindowThreadProcessId(fore_hwnd)[0]
-                target_thread = win32process.GetWindowThreadProcessId(hwnd)[0]
-                if fore_thread != target_thread:
-                    win32process.AttachThreadInput(fore_thread, target_thread, True)
-                    win32gui.BringWindowToTop(hwnd)
-                    win32gui.SetForegroundWindow(hwnd)
-                    win32process.AttachThreadInput(fore_thread, target_thread, False)
-                else:
-                    win32gui.BringWindowToTop(hwnd)
-                    win32gui.SetForegroundWindow(hwnd)
-            else:
-                win32gui.BringWindowToTop(hwnd)
-                win32gui.SetForegroundWindow(hwnd)
-        except Exception:
-            try:
-                win32gui.SetForegroundWindow(hwnd)
-            except Exception:
-                pass
-
-        time.sleep(0.1)
+        # Bring to foreground with multi-tier Win32 lock bypass
+        is_now_active = force_window_to_foreground(hwnd)
+        
+        time.sleep(0.08)
         active = get_active_window()
-        is_now_active = (active["hwnd"] == hwnd) or (query_lower in active["title"].lower())
+        is_now_active = is_now_active or (active["hwnd"] == hwnd) or (query_lower in active["title"].lower())
         verification = take_screenshot() if capture_after else None
         return {
             "status": "ok",
@@ -1064,48 +1091,84 @@ def resolve_web_target(query_or_url: str) -> str:
     # 4. Search query
     return f"https://www.google.com/search?q={urllib.parse.quote_plus(clean)}"
 
+def get_browser_executable(browser_preference: str = None) -> str:
+    """Finds exact executable path for Chrome, Edge, Brave, or Firefox on Windows."""
+    import winreg
+    targets = []
+    if browser_preference:
+        b = browser_preference.lower()
+        if "chrome" in b:
+            targets = ["chrome.exe"]
+        elif "edge" in b or "msedge" in b:
+            targets = ["msedge.exe"]
+        elif "brave" in b:
+            targets = ["brave.exe"]
+        elif "firefox" in b:
+            targets = ["firefox.exe"]
+    if not targets:
+        targets = ["chrome.exe", "msedge.exe", "brave.exe", "firefox.exe"]
+
+    # 1. Registry App Paths
+    for target in targets:
+        for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                sub_key = f"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{target}"
+                with winreg.OpenKey(root, sub_key) as k:
+                    val = winreg.QueryValue(k, None)
+                    if val and os.path.exists(val):
+                        return val
+            except Exception:
+                pass
+
+    # 2. Well-known disk locations
+    well_known = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for p in well_known:
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def browse_web(query_or_url: str, browser: str = None) -> dict:
     """
-    Launches browser natively via subprocess/os.startfile in <50ms without GUI clicking loops.
+    Launches browser natively via executable with --new-window and forces foreground activation.
     """
+    attach_to_default_desktop()
     target_url = resolve_web_target(query_or_url)
     start_time = time.time()
-    browser_used = browser.lower() if browser else "default"
+    browser_pref = browser.lower() if browser else "chrome"
+
+    browser_exe = get_browser_executable(browser_pref)
+    if not browser_exe:
+        browser_exe = get_browser_executable()
 
     try:
-        if browser_used in ("chrome", "google chrome"):
-            chrome_app = find_installed_application("chrome")
-            if chrome_app.get("status") == "ok":
-                cmd = f'"{chrome_app["Path"]}" --new-window "{target_url}"'
-            else:
-                cmd = f'start chrome --new-window "{target_url}"'
-            subprocess.Popen(cmd, shell=True)
-        elif browser_used in ("edge", "msedge", "microsoft edge"):
-            edge_app = find_installed_application("msedge")
-            if edge_app.get("status") == "ok":
-                cmd = f'"{edge_app["Path"]}" --new-window "{target_url}"'
-            else:
-                cmd = f'start msedge --new-window "{target_url}"'
-            subprocess.Popen(cmd, shell=True)
+        si = subprocess.STARTUPINFO()
+        si.lpDesktop = "winsta0\\default"
+
+        if browser_exe and os.path.exists(browser_exe):
+            cmd = [browser_exe, "--new-window", target_url]
+            subprocess.Popen(cmd, startupinfo=si)
+            actual_browser = os.path.basename(browser_exe).replace(".exe", "")
         else:
-            # Check for installed Chrome or Edge first for crisp foreground window rendering
-            chrome_app = find_installed_application("chrome")
-            if chrome_app.get("status") == "ok":
-                cmd = f'"{chrome_app["Path"]}" --new-window "{target_url}"'
-                subprocess.Popen(cmd, shell=True)
-                browser_used = "chrome"
-            else:
-                try:
-                    os.startfile(target_url)
-                except Exception:
-                    import webbrowser
-                    webbrowser.open(target_url)
+            try:
+                os.startfile(target_url)
+                actual_browser = "default"
+            except Exception:
+                import webbrowser
+                webbrowser.open(target_url)
+                actual_browser = "default"
 
         # Force foreground activation so window is physically visible on user's screen
-        time.sleep(0.15)
-        for b_target in ([browser_used, "chrome", "msedge", "edge"] if browser_used else ["chrome", "msedge"]):
+        time.sleep(0.3)
+        for b_target in [actual_browser, "chrome", "msedge", "edge", "google play", "google"]:
             f_res = focus_window(b_target)
-            if f_res.get("status") in ("ok", "success"):
+            if f_res.get("status") in ("ok", "success") and f_res.get("is_active_foreground"):
                 break
 
         elapsed = round((time.time() - start_time) * 1000, 2)
@@ -1115,9 +1178,9 @@ def browse_web(query_or_url: str, browser: str = None) -> dict:
             "action": "browse",
             "input": query_or_url,
             "resolved_url": target_url,
-            "browser": browser_used,
+            "browser": actual_browser,
             "elapsed_ms": elapsed,
-            "message": f"Successfully launched '{target_url}' in {browser_used} browser in {elapsed}ms."
+            "message": f"Successfully launched '{target_url}' in {actual_browser} browser in {elapsed}ms."
         }
     except Exception as e:
         return {
@@ -1125,7 +1188,7 @@ def browse_web(query_or_url: str, browser: str = None) -> dict:
             "action": "browse",
             "input": query_or_url,
             "resolved_url": target_url,
-            "browser": browser_used,
+            "browser": browser_pref,
             "error": str(e)
         }
 
