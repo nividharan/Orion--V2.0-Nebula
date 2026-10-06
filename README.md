@@ -152,20 +152,31 @@ orion apps [filter]                             # Search installed applications
 orion ports                                     # Scan listening network ports
 ```
 
-### Screen & System Telemetry
+### Continuous Screen Perception & Monitoring
 ```powershell
+orion watch                                     # Real-time continuous screen perception monitor (FPS, Delta %, Settled status)
+orion watch --fps 8                             # Monitor screen at 8 FPS
 orion quick                                     # Fast 6ms workstation telemetry
 orion status                                    # Full system status JSON
 orion shot                                      # Instant screen capture
 ```
 
-### Natural Language & AutoGen Multi-Agent Workflows
+### Autonomous Self-Healing & Error Resolution
 ```powershell
-# Run with 5-agent collaborative team (line-by-line streaming)
+orion heal                                      # Diagnostic scan: auto-dismisses modal error popups & repairs context
+```
+
+### Natural Language, AutoGen Society & 3D Automation
+```powershell
+# Run with 5-agent collaborative team (with continuous perception & auto-healing)
 orion team "open chrome to https://github.com, launch notepad, and announce status"
 
-# Or using plain English directly
-orion "open notepad, type Hello AutoGen, and announce completion"
+# Native Blender 3D automation over local socket port 9876
+orion team "in the opened blender create a red circle"
+orion team "in the opened blender create a blue cube"
+
+# General in-app natural language actions
+orion "in notepad type Hello Orion, and announce completion"
 ```
 
 ### Microphone Audio Input & Speech

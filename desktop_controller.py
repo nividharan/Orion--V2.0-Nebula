@@ -648,8 +648,331 @@ def get_blender_scene_info(port: int = 9876) -> dict:
 
 
 # ==============================================================================
-# SCREEN CAPTURE & VISION (CONTINUOUS BUFFER)
+# SCREEN CAPTURE & VISION (CONTINUOUS PERCEPTION BUFFER)
 # ==============================================================================
+
+PERCEPTION_STATE_PATH = os.path.join(CACHE_DIR, "perception_state.json")
+
+
+class ContinuousPerceptionEngine:
+    """
+    Sub-10ms asynchronous continuous visual perception stream.
+    Runs a non-blocking daemon thread capturing the desktop at 5-10 FPS via mss,
+    computing perceptual frame differences (RMS pixel delta), tracking the active
+    foreground window, and publishing live telemetry to .cache/perception_state.json.
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super(ContinuousPerceptionEngine, cls).__new__(cls)
+                cls._instance._initialized = False
+            return cls._instance
+
+    def __init__(self, target_fps: float = 6.0, save_buffer: bool = True):
+        if self._initialized:
+            return
+        self.target_fps = target_fps
+        self.interval = 1.0 / max(1.0, target_fps)
+        self.save_buffer = save_buffer
+        self.running = False
+        self.thread = None
+        self.last_frame = None
+        self.last_frame_time = 0.0
+        self.frame_count = 0
+        self.effective_fps = 0.0
+        self.visual_delta_pct = 0.0
+        self.is_settled = True
+        self.settled_since = time.time()
+        self.active_window_info = {}
+        self.recent_deltas = []
+        self._initialized = True
+
+    def start(self):
+        """Starts background perception capture loop."""
+        if self.running:
+            return self
+        self.running = True
+        self.thread = threading.Thread(target=self._capture_loop, name="OrionPerceptionThread", daemon=True)
+        self.thread.start()
+        time.sleep(0.08)  # Warm up first frame
+        return self
+
+    def stop(self):
+        """Stops background perception capture loop."""
+        self.running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        self.thread = None
+
+    def _capture_loop(self):
+        attach_to_default_desktop()
+        import mss
+        sct = None
+        prev_gray = None
+        last_stat_time = time.time()
+        frames_in_stat = 0
+
+        try:
+            sct = mss.mss()
+            monitor = sct.monitors[1]
+
+            while self.running:
+                t0 = time.time()
+                try:
+                    # 1. Capture screen buffer in <8ms
+                    shot = sct.grab(monitor)
+                    img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+
+                    # 2. Downsample for ultra-fast perceptual diff (320x180 thumbnail)
+                    thumb_gray = img.resize((320, 180), Image.Resampling.BILINEAR).convert("L")
+
+                    # 3. Calculate perceptual frame diff
+                    delta_pct = 0.0
+                    if prev_gray is not None:
+                        diff = ImageChops.difference(thumb_gray, prev_gray)
+                        stat = ImageStat.Stat(diff)
+                        rms = stat.rms[0]  # Root Mean Square of pixel differences (0-255)
+                        delta_pct = round((rms / 255.0) * 100.0, 2)
+                    prev_gray = thumb_gray
+
+                    # 4. Determine settlement (settled if delta < 0.8% for >= 250ms)
+                    now = time.time()
+                    if delta_pct < 0.8:
+                        if not self.is_settled and (now - self.settled_since) >= 0.25:
+                            self.is_settled = True
+                    else:
+                        self.is_settled = False
+                        self.settled_since = now
+
+                    self.visual_delta_pct = delta_pct
+                    self.recent_deltas.append(delta_pct)
+                    if len(self.recent_deltas) > 30:
+                        self.recent_deltas.pop(0)
+
+                    # 5. Query active window telemetry
+                    self.active_window_info = get_active_window()
+
+                    # 6. Save rolling buffer periodically
+                    self.frame_count += 1
+                    frames_in_stat += 1
+                    if now - last_stat_time >= 1.0:
+                        self.effective_fps = round(frames_in_stat / (now - last_stat_time), 1)
+                        frames_in_stat = 0
+                        last_stat_time = now
+
+                    if self.save_buffer and (self.frame_count % int(max(1, self.target_fps))) == 0:
+                        img.save(LIVE_SCREEN_PATH)
+                        self._export_telemetry()
+
+                except Exception:
+                    pass
+
+                # Rate limiting
+                elapsed = time.time() - t0
+                sleep_time = max(0.005, self.interval - elapsed)
+                time.sleep(sleep_time)
+
+        finally:
+            if sct:
+                try:
+                    sct.close()
+                except Exception:
+                    pass
+
+    def _export_telemetry(self):
+        state = self.get_state()
+        try:
+            with open(PERCEPTION_STATE_PATH, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+        except Exception:
+            pass
+
+    def get_state(self) -> dict:
+        """Returns the current real-time visual perception telemetry."""
+        return {
+            "status": "active" if self.running else "idle",
+            "effective_fps": self.effective_fps,
+            "target_fps": self.target_fps,
+            "visual_delta_pct": self.visual_delta_pct,
+            "is_settled": self.is_settled,
+            "frame_count": self.frame_count,
+            "active_window": self.active_window_info,
+            "screen_path": LIVE_SCREEN_PATH,
+            "timestamp": time.time()
+        }
+
+    def wait_for_settled(self, timeout: float = 2.0, threshold_pct: float = 1.0) -> bool:
+        """Waits until screen animations/changes have settled down (loading completed)."""
+        t_start = time.time()
+        time.sleep(0.08)
+        while time.time() - t_start < timeout:
+            if self.is_settled and self.visual_delta_pct <= threshold_pct:
+                return True
+            time.sleep(0.05)
+        return self.is_settled
+
+
+# ==============================================================================
+# AUTONOMOUS SELF-HEALING & ERROR RESOLUTION ENGINE
+# ==============================================================================
+
+class SelfHealingResolver:
+    """
+    Autonomous closed-loop error recovery and anomaly resolution engine.
+    Detects and dismisses rogue modal error dialogs (Win32 #32770, 'Windows cannot find...'),
+    auto-launches missing target windows, resurrects dead service ports (Blender 9876 / API 8765),
+    repairs Blender 3D state, and wraps actions in a robust try-heal-retry loop.
+    """
+
+    @staticmethod
+    def scan_and_dismiss_modal_dialogs() -> dict:
+        """
+        Scans for top-level modal dialogs, error popups, and alert boxes.
+        Extracts diagnostic text, automatically dismisses them via WM_CLOSE / Enter,
+        and returns the diagnosis to the caller.
+        """
+        attach_to_default_desktop()
+        import win32gui, win32con
+        dismissed = []
+
+        ERROR_KEYWORDS = ["error", "cannot find", "failed", "warning", "exception", "not found", "in", "problem", "alert"]
+
+        def enum_cb(hwnd, _):
+            if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd):
+                return
+            title = win32gui.GetWindowText(hwnd).strip()
+            class_name = win32gui.GetClassName(hwnd)
+
+            is_dialog_class = (class_name == "#32770")
+            title_lower = title.lower()
+            matches_keyword = any(kw == title_lower or (len(kw) > 3 and kw in title_lower) or bool(re.search(rf"\b{re.escape(kw)}\b", title_lower)) for kw in ERROR_KEYWORDS)
+
+            # Safeguard: Never dismiss full OS apps or IDEs unless title explicitly indicates error
+            if class_name in ("Windows.UI.Core.CoreWindow", "ApplicationFrameWindow") and not any(kw in title_lower for kw in ["error", "failed", "cannot find"]):
+                return
+
+            if is_dialog_class or (matches_keyword and len(title) < 50):
+                child_texts = []
+                def child_cb(chwnd, _):
+                    ctext = win32gui.GetWindowText(chwnd).strip()
+                    if ctext and ctext not in child_texts and len(ctext) > 1:
+                        child_texts.append(ctext)
+                try:
+                    win32gui.EnumChildWindows(hwnd, child_cb, None)
+                except Exception:
+                    pass
+
+                full_msg = " | ".join(child_texts) if child_texts else title
+
+                try:
+                    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                    time.sleep(0.05)
+                    if win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd):
+                        user32 = ctypes.windll.user32
+                        user32.PostMessageW(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
+                        user32.PostMessageW(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+                except Exception:
+                    pass
+
+                dismissed.append({
+                    "hwnd": hwnd,
+                    "title": title,
+                    "class": class_name,
+                    "message": full_msg,
+                    "action_taken": "auto_dismissed"
+                })
+
+        try:
+            win32gui.EnumWindows(enum_cb, None)
+        except Exception:
+            pass
+
+        return {
+            "status": "ok" if not dismissed else "healed",
+            "detected_count": len(dismissed),
+            "dismissed_dialogs": dismissed,
+            "has_error_modal": len(dismissed) > 0
+        }
+
+    @staticmethod
+    def heal_missing_window(app_query: str, timeout: float = 6.0) -> dict:
+        """Auto-discovers and launches missing application window, then forces foreground focus."""
+        attach_to_default_desktop()
+        launch_res = launch_application(app_query, wait_for_window=True, timeout_sec=timeout)
+        time.sleep(0.3)
+        focus_res = focus_window(app_query)
+        return {
+            "status": "ok" if focus_res.get("is_active_foreground") else "retry_needed",
+            "app": app_query,
+            "launch_res": launch_res,
+            "focus_res": focus_res
+        }
+
+    @staticmethod
+    def heal_dead_port(service_name: str, port: int, timeout: float = 8.0) -> dict:
+        """Resurrects a dead service or daemon on a target TCP port."""
+        p_check = check_port(port)
+        if p_check.get("is_open"):
+            return {"status": "ok", "already_running": True, "port": port}
+
+        launch_application(service_name, wait_for_window=False)
+
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            time.sleep(0.5)
+            if check_port(port).get("is_open"):
+                return {"status": "ok", "resurrected": True, "port": port, "elapsed_s": round(time.time() - t0, 2)}
+
+        return {"status": "error", "message": f"Failed to resurrect service '{service_name}' on port {port} within {timeout}s"}
+
+    @staticmethod
+    def heal_blender_context(port: int = 9876) -> dict:
+        """Resets Blender 3D context to a clean, non-conflicting OBJECT mode."""
+        repair_code = """import bpy
+try:
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+    print("BLENDER_HEAL_OK: Context reset to OBJECT mode and unselected.")
+except Exception as e:
+    print(f"BLENDER_HEAL_WARN: {e}")
+"""
+        return execute_blender_code(repair_code, port=port)
+
+    @classmethod
+    def run_with_self_healing(cls, action_fn, max_retries: int = 3, on_heal_callback=None):
+        """
+        Universal execution harness that wraps any action function in a self-healing retry loop.
+        """
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            modal_diag = cls.scan_and_dismiss_modal_dialogs()
+            if modal_diag.get("has_error_modal") and on_heal_callback:
+                for d in modal_diag.get("dismissed_dialogs", []):
+                    on_heal_callback("modal_dismissed", f"Dismissed blocking dialog '{d['title']}': {d['message']}")
+
+            try:
+                result = action_fn()
+                if isinstance(result, dict) and result.get("status") in ("error", "fail"):
+                    last_error = result.get("error") or result.get("message") or "Unknown error"
+                    if on_heal_callback:
+                        on_heal_callback("anomaly_detected", f"Attempt {attempt}/{max_retries} failed: {last_error}")
+                    cls.scan_and_dismiss_modal_dialogs()
+                    time.sleep(0.2)
+                    continue
+                return result
+            except Exception as e:
+                last_error = str(e)
+                if on_heal_callback:
+                    on_heal_callback("exception_caught", f"Attempt {attempt}/{max_retries} exception: {last_error}")
+                cls.scan_and_dismiss_modal_dialogs()
+                time.sleep(0.2)
+
+        return {"status": "error", "error": f"Failed after {max_retries} self-healing attempts. Last error: {last_error}"}
+
 
 def take_screenshot(save_path: str = None, bbox: tuple = None) -> dict:
     """Captures desktop screen into rolling live buffer or designated path."""
@@ -2521,6 +2844,49 @@ def run_interactive_console():
             print(f"[-] Error: {e}")
 
 
+def run_live_watch_monitor(fps: float = 6.0):
+    """Provides a live updating terminal dashboard of continuous screen perception telemetry."""
+    engine = ContinuousPerceptionEngine(target_fps=fps).start()
+    bar = "=" * 76
+    print(bar)
+    print("  🌌 ORION v2.0 'NEBULA' - Continuous Screen Perception Monitor")
+    print(f"  Live Visual Stream: {fps} FPS Target | Sub-10ms Buffer | Press Ctrl+C to Exit")
+    print(bar)
+    try:
+        while True:
+            st = engine.get_state()
+            win = st.get("active_window", {})
+            title = win.get("title", "[Desktop]") or "[Desktop]"
+            proc = win.get("process", "explorer.exe") or "explorer.exe"
+            delta = st.get("visual_delta_pct", 0.0)
+            settled_tag = "SETTLED" if st.get("is_settled") else "ACTIVE/CHANGING"
+            eff_fps = st.get("effective_fps", 0.0)
+            frames = st.get("frame_count", 0)
+
+            clean_title = (title[:30] + "..") if len(title) > 32 else title
+            sys.stdout.write(f"\r[Perception] FPS: {eff_fps:4.1f} | Delta: {delta:5.2f}% [{settled_tag:15s}] | Frame: #{frames:5d} | Window: {proc} - {clean_title}")
+            sys.stdout.flush()
+            time.sleep(0.15)
+    except KeyboardInterrupt:
+        print("\n[Perception] Monitor stopped by user.")
+    finally:
+        engine.stop()
+
+
+def run_self_healing_cli() -> dict:
+    """Executes an immediate self-healing diagnostic and modal dialog dismissal scan."""
+    print("🌌 Orion Autonomous Self-Healing Diagnostic Scan...")
+    modal_res = SelfHealingResolver.scan_and_dismiss_modal_dialogs()
+    b_heal = SelfHealingResolver.heal_blender_context() if check_port(9876).get("is_open") else {"status": "skipped", "message": "Blender port 9876 inactive"}
+    return {
+        "status": "success",
+        "modal_dialogs": modal_res,
+        "blender_context": b_heal,
+        "active_window": get_active_window(),
+        "timestamp": time.time()
+    }
+
+
 # ==============================================================================
 # CLI HANDLER
 # ==============================================================================
@@ -2686,6 +3052,13 @@ def main():
     p_team = subparsers.add_parser("team", aliases=["run", "workflow"], help="Execute goal with AutoGen 5-Agent Collaborative Society")
     p_team.add_argument("goal", nargs="+", help="Goal prompt for the agent society")
 
+    # watch (continuous screen perception telemetry)
+    p_watch = subparsers.add_parser("watch", aliases=["monitor_stream"], help="Live continuous screen perception monitor")
+    p_watch.add_argument("--fps", type=float, default=6.0, help="Target capture FPS (default 6.0)")
+
+    # heal (autonomous self-healing scan and modal dismissal)
+    subparsers.add_parser("heal", help="Autonomous self-healing scan and error dialog auto-dismissal")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -2694,6 +3067,15 @@ def main():
 
     if args.command in ("console", "shell", "interactive"):
         run_interactive_console()
+        return
+
+    if args.command in ("watch", "monitor_stream"):
+        run_live_watch_monitor(fps=args.fps)
+        return
+
+    if args.command == "heal":
+        result = run_self_healing_cli()
+        print(json.dumps(result, indent=2))
         return
 
     if args.command in ("team", "run", "workflow"):

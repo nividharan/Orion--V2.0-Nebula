@@ -21,6 +21,17 @@ if ($firstArg -in @("team", "run", "workflow", "autogen")) {
     return
 }
 
+if ($firstArg -in @("watch", "monitor")) {
+    $watchArgs = $ArgsList[1..($ArgsList.Count - 1)]
+    & python $PythonScript watch $watchArgs
+    return
+}
+
+if ($firstArg -eq "heal") {
+    & python $PythonScript heal
+    return
+}
+
 if ($firstArg -in @("console", "shell", "interactive", "terminal")) {
     & python $PythonScript console
     return
