@@ -1,139 +1,103 @@
-# 🌌 Orion v2.0 `"Nebula"`
-### Universal Autonomous Desktop, Service & Perception Engine for Google Antigravity
+# 🌌 Orion v2.0 "Nebula"
+### Fast Desktop Automation & Screen Perception System
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6.svg)](https://microsoft.com/windows)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB.svg)](https://python.org)
-[![Antigravity: Enabled](https://img.shields.io/badge/Antigravity-v1.3.0+-8A2BE2.svg)](https://github.com)
-[![Latency: Sub--10ms](https://img.shields.io/badge/Reaction%20Time-%3C10ms-00C853.svg)](#low-latency-api-engine-port-8765)
 
 ---
 
-## 🌟 Overview
+## 🌟 What is Orion?
 
-**Orion v2.0 `"Nebula"`** is an enterprise-grade autonomous desktop GUI, CLI, and engine automation system engineered for **Google Antigravity (`agy`)**.
+**Orion v2.0 "Nebula"** is a smart desktop automation assistant for Windows. It lets you control applications, browse the web, speak with professional studio voices, and track your screen activity using simple commands or voice instructions.
 
-Built upon **Option D (The Unified Hybrid Architecture)**, Orion completely eliminates the slow, fragile "Stop-and-Go" vision loops of traditional automation. Instead of uploading 5MB screenshots after every click and waiting seconds for model round-trips, Orion operates as a **dual-layer cybernetic system**:
-1. **The In-Memory Nervous System (Port `8765`):** Continuously tracks foreground windows, processes, and visual frame deltas in RAM with <1% CPU and executes actions in **6ms–15ms**.
-2. **The 5-Stage Closed-Loop Protocol:** Guarantees that applications are physically rendered on screen, socket ports are connected, machine-speed batches execute uninterrupted, and **expected outputs are strictly verified** before completing.
-
-Orion dynamically controls all **209+ software applications, local AI servers, and development tools** installed on Windows.
+Instead of slow, clunky automation, Orion responds instantly (in under 50 milliseconds) using an efficient local background server.
 
 ---
 
-## 🚀 The 5-Stage Closed-Loop Protocol
+## ⚡ Technologies Used
 
-```
-[User Voice / Text Instruction]
-              │
-              ▼
-Stage 1: Upfront Pre-Flight Validation (<0.18s)
-  - Asserts application presence (catalog of 209 apps), process health, and socket ports.
-              │
-              ▼
-Stage 2: Live Screen Window & Service Activation
-  - Terminates headless zombie instances, launches via shell:AppsFolder,
-    guarantees a physical HWND rendered on your live screen (WinSta0\Default).
-              │
-              ▼
-Stage 3: Continuous Machine-Speed Execution (0.05s–0.15s/action)
-  - Direct Engine IPC (if APIs/sockets exist) OR Continuous Compiled Batch GUI.
-              │
-              ▼
-Stage 4: Milestone Checkpointing & Live Perception Streaming
-  - Rolling screen frame saved strictly to: .cache/screen_live.png (Zero workspace clutter).
-  - Live video and telemetry streamed to: http://localhost:8765/
-              │
-              ▼
-Stage 5: Expected Output Validation Engine
-  - Validates output files (existence, size, path).
-  - Validates active window states & titles.
-  - Validates socket port readiness & HTTP endpoints.
-  - Validates visual motion delta (detects if animations/streams are active).
-```
+Orion is powered by modern, reliable technologies:
+
+* **Python 3.10+**: Core automation engine, web search resolver, and task coordinator.
+* **PowerShell & Windows Command Line**: Fast command-line interface with instant regex intent routing.
+* **Windows OneCore & SAPI Speech API**: High-definition studio text-to-speech engine (featuring Microsoft George, Susan, Zira, Heera, and Ravi).
+* **Windows Win32 GUI APIs**: Pixel-accurate window focusing, mouse control, and keyboard typing.
+* **Lightweight Local REST API (Port 8765)**: In-memory perception server delivering live screen data and video streaming.
+* **Google Antigravity (`agy`) Integration**: Natural language AI fallback for complex multi-step user tasks.
 
 ---
 
-## ⚡ Low-Latency API Engine (Port 8765)
+## 🚀 How It Works
 
-Orion runs a lightweight, persistent in-memory perception and execution server:
+Orion works through three simple layers:
 
-| Endpoint | Method | Latency | Description |
-| :--- | :--- | :--- | :--- |
-| **`/quick_state`** | `GET` | **~6ms** | Micro-telemetry (Active window, PID, mouse coords, motion delta) for instant decisions. |
-| **`/vlm_frame`** | `GET` | **~35ms** | Optimized 50KB JPEG frame (100× smaller than PNG) for fast multimodal AI vision. |
-| **`/action`** | `POST` | **~15ms** | Direct in-process execution (click, paste, type, press, focus, hotkey) with zero startup lag. |
-| **`/batch`** | `POST` | Machine speed | Continuous compiled multi-step action sequence. |
-| **`/task`** | `POST` | Closed loop | Full 5-stage task runner with output verification. |
-| **`/status`** | `GET` | **~1ms** | Full workstation JSON telemetry and animation detection. |
-| **`/stream`** | `GET` | Real-time | Live MJPEG video stream accessible from any web browser. |
-| **`/`** | `GET` | Real-time | Interactive Web Dashboard with live preview and status cards. |
+### 1. Smart Intent Router
+When you type a command, Orion understands what you want to do right away:
+* **Web Searching & Browsing**: Type `orion "open chrome swayam nptel"` or `orion browse "machine learning"` and Orion opens the website directly in under 40 milliseconds without any mouse clicking loops.
+* **App Launching**: Type `orion open notepad` or `orion open blender` to launch any installed application on your system.
+* **Window Focusing**: Type `orion focus "Visual Studio Code"` to instantly bring any open window to the front.
+* **Voice Speech**: Type `orion speak "Task completed"` to hear updates spoken out loud in a natural, professional voice.
+
+### 2. Live Screen Perception
+Orion runs a lightweight server in the background:
+* **Live Telemetry**: Checks which window is currently open, where the mouse is, and if animations are playing on your screen.
+* **Fast Vision Frames**: Takes small, high-quality snapshots (50 KB) so AI vision models can inspect your screen with low delay.
+* **Web Dashboard**: Lets you view your live screen stream and system status in your browser at `http://localhost:8765/`.
+
+### 3. Closed-Loop Task Verification
+Whenever Orion completes an action, it automatically verifies that:
+* The window actually appeared on the screen.
+* The expected files were created.
+* The required network ports or servers are running.
 
 ---
 
-## 🛠️ CLI Reference: `orion` (also `deskctl` / `desk`)
+## 🛠️ How to Use (Commands)
 
-Orion entrypoints are globally deployed to PATH:
+You can use `orion` (or the aliases `nebula`, `deskctl`, and `dskctl`) directly in your terminal:
 
+### Web Browsing & Search
 ```powershell
-# 1. Instant Status & Perception (In-Memory Fast Path)
-orion quick                               # Instant 6ms micro-telemetry JSON
-orion status                              # Full workstation telemetry and motion delta
-orion shot                                # Ultra-fast screen capture to .cache/screen_live.png
-
-# 2. Window & Application Lifecycle
-orion open vlc                            # Launches GUI window, clears zombies, restores to front
-orion focus Chrome                        # Instantly brings window to foreground (<50ms)
-orion windows                             # List all active top-level windows with HWNDs
-
-# 3. Universal Discovery
-orion apps kicad                          # Search across 209 installed Windows applications
-orion ports                               # Netstat scan of all listening TCP ports in 0.05s
-orion port 8888                           # Test TCP socket connectivity
-
-# 4. Closed-Loop Autonomous Task Runner
-orion task --file task.json               # Execute 5-stage task with expected output validation
-
-# 5. Natural Language AI Agent Delegation (Antigravity CLI)
-orion "open excel and create a monthly expense table"
-orion "open blender and animate a rotating gold cube"
+orion browse "swayam nptel"                # Opens exact portal directly
+orion browse "https://github.com"          # Opens website in default browser
+orion browse "machine learning"            # Searches Google instantly
+orion "open chrome swayam nptel"           # Opens in Google Chrome
 ```
 
----
-
-## 🌐 Universal Tool Matrix
-
-Orion is completely application-agnostic:
-
-* **Web Browsers:** Google Chrome, Microsoft Edge
-* **Productivity & Office:** Excel, Word, PowerPoint, OneNote, Outlook, Access, Notion, To Do
-* **Creative & Media:** Paint, Paint 3D, VLC Media Player, OBS Studio, CapCut, Clipchamp
-* **Engineering & CAD:** KiCad 10.0 (PCB & Schematic), MATLAB R2026a, NI LabVIEW 2026 Q3, Arduino IDE
-* **Developer IDEs:** Antigravity IDE, Visual Studio Code, Terminal, PowerShell, Git Bash
-* **Data Science & AI:** Jupyter (8888), Streamlit (8501), Ollama (11434), LM Studio (1234)
-* **3D & Modeling:** Blender 5.2.2 (9876), ComfyUI (8188)
-
----
-
-## 📁 Repository Structure
-
+### Voice Speech
+```powershell
+orion speak "System is online and ready."          # Professional George voice (Default)
+orion speak "Process finished successfully." -v Susan  # Professional Susan voice
+orion speak "Hello world." -v Zira                 # Clear American voice
+orion voices                                       # List all available voices
 ```
-c:\skill\
-├── desktop_controller.py      # Core Orion in-memory controller & API server (Port 8765)
-├── orion.ps1 / orion.cmd      # Official Orion CLI entrypoint wrappers
-├── deskctl.ps1 / deskctl.cmd  # Power-user CLI aliases
-├── desk.cmd                   # Legacy CMD wrapper
-├── Project_Definition.txt     # Architecture & system specifications
-├── README.md                  # System documentation & usage guide
-├── .gitignore                 # Workspace hygiene (excludes cache & loose screenshots)
-├── .cache/                    # Ephemeral runtime buffer (screen_live.png, catalogs)
-└── .gemini/skills/
-    └── voice-desktop-automation/
-        └── SKILL.md           # Antigravity skill specification
+
+### Application & Window Control
+```powershell
+orion open blender                         # Launch any installed app
+orion focus Chrome                         # Bring Chrome to the front
+orion windows                              # List all open windows
+orion apps code                            # Search your installed apps
+orion ports                                # Scan listening network ports
+```
+
+### Screen & System Status
+```powershell
+orion quick                                # Instant 6ms screen status
+orion status                               # Full system telemetry
+orion shot                                 # Quick screenshot capture
+```
+
+### Natural Language Tasks
+If a command requires complex steps, Orion automatically forwards it to the Antigravity AI agent:
+```powershell
+orion "create a monthly expense budget in excel"
+orion "generate a 3d model in blender"
 ```
 
 ---
 
 ## 📜 License
 
-Distributed under the **MIT License**. Created with precision for **Google Antigravity**.
+Distributed under the **MIT License**.
