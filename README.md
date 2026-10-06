@@ -53,6 +53,33 @@ Every automated action validates results:
 
 ---
 
+## 📦 Installation & Setup
+
+### 1. Clone the Repository
+```powershell
+git clone https://github.com/nividharan/Orion--V2.0-Nebula.git
+cd Orion--V2.0-Nebula
+```
+
+### 2. Install Dependencies
+```powershell
+pip install -r requirements.txt
+```
+
+### 3. Start the Background Perception Server (Optional)
+```powershell
+python desktop_controller.py api --port 8765
+```
+> Open `http://localhost:8765/` in your browser to view the real-time screen stream and workstation status dashboard.
+
+### 4. Verify Installation
+```powershell
+orion version
+orion quick
+```
+
+---
+
 ## 🛠️ Command Reference
 
 Use `orion` (or the aliases `nebula`, `deskctl`, and `dskctl`) from your terminal:
