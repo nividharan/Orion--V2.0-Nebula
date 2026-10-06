@@ -124,7 +124,7 @@ $controllerCmds = @(
     "shot", "screenshot", "click", "hover", 
     "double_click", "right_click", "move", "drag", "scroll", "pos", 
     "type", "paste", "press", "hotkey", "list_windows", "windows", 
-    "active_window", "focus", "speak", "voices", "list_voices", "transcribe", "listen",
+    "active_window", "focus", "speak", "voices", "list_voices", "transcribe", "listen", "record",
     "status", "api", "monitor", "server", "task"
 )
 

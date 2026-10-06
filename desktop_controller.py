@@ -1516,9 +1516,54 @@ def transcribe_audio(audio_path: str) -> dict:
             except Exception:
                 pass
 
-        return {"status": "ok", "text": text, "source": audio_path}
+        return {"status": "success", "success": True, "text": text, "source": audio_path}
     except Exception as e:
-        return {"status": "error", "error": str(e), "source": audio_path}
+        return {"status": "error", "success": False, "error": str(e), "source": audio_path}
+
+
+def record_microphone(duration_sec: float = 4.0, save_path: str = None) -> dict:
+    """Records audio from the default Windows microphone using native WinMM subsystem."""
+    import ctypes
+    winmm = ctypes.windll.winmm
+    out_path = os.path.abspath(save_path) if save_path else os.path.join(CACHE_DIR, "voice_input.wav")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+    try:
+        alias = f"rec_{int(time.time() * 1000)}"
+        winmm.mciSendStringW(f"open new type waveaudio alias {alias}", None, 0, None)
+        winmm.mciSendStringW(f"record {alias}", None, 0, None)
+        time.sleep(duration_sec)
+        winmm.mciSendStringW(f'save {alias} "{out_path}"', None, 0, None)
+        winmm.mciSendStringW(f"close {alias}", None, 0, None)
+
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            return {
+                "status": "success",
+                "success": True,
+                "recorded_file": out_path,
+                "duration_sec": duration_sec,
+                "size_bytes": os.path.getsize(out_path)
+            }
+        else:
+            return {"status": "error", "success": False, "error": "Microphone recording produced empty audio file"}
+    except Exception as e:
+        return {"status": "error", "success": False, "error": str(e)}
+
+
+def listen(duration_sec: float = 4.0) -> dict:
+    """Listens to the default microphone, records speech, and transcribes it to text."""
+    rec_res = record_microphone(duration_sec=duration_sec)
+    if not rec_res.get("success"):
+        return rec_res
+    wav_path = rec_res["recorded_file"]
+    trans = transcribe_audio(wav_path)
+    return {
+        "status": "success",
+        "success": True,
+        "text": trans.get("text", ""),
+        "audio_file": wav_path,
+        "duration_sec": duration_sec
+    }
 
 
 # ==============================================================================
@@ -2297,13 +2342,31 @@ def run_interactive_console():
                 ms = round((time.perf_counter() - t_start) * 1000, 1)
                 print(f"[SUCCESS] Pre-flight check passed ({len(res.get('installed_apps', []))} apps detected) in {ms}ms")
 
-            # 16. Direct URL entry
+            # 16. Audio input: listen / record
+            elif first in ("listen", "hear", "mic"):
+                dur = float(parts[1]) if len(parts) > 1 and parts[1].replace(".", "").isdigit() else 4.0
+                print(f"[*] Listening to microphone for {dur}s... (speak now)")
+                res = listen(duration_sec=dur)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                txt = res.get("text", "")
+                if txt:
+                    print(f"[SUCCESS] Heard: \"{txt}\" in {ms}ms")
+                else:
+                    print(f"[SUCCESS] Audio captured to '{res.get('audio_file')}' in {ms}ms (no speech detected)")
+            elif first in ("record", "mic_record") and len(parts) > 1:
+                dur = float(parts[1]) if parts[1].replace(".", "").isdigit() else 4.0
+                print(f"[*] Recording microphone for {dur}s...")
+                res = record_microphone(duration_sec=dur)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Recorded audio to '{res.get('recorded_file')}' in {ms}ms")
+
+            # 17. Direct URL entry
             elif line.startswith("http://") or line.startswith("https://") or line.startswith("www."):
                 res = browse_web(line)
                 ms = round((time.perf_counter() - t_start) * 1000, 1)
                 print(f"[SUCCESS] Navigated to '{res.get('target', line)}' in {ms}ms")
 
-            # 17. Intelligent intent fallback
+            # 18. Intelligent intent fallback
             else:
                 app_check = find_installed_application(line)
                 if app_check.get("status") == "ok":
@@ -2425,6 +2488,17 @@ def main():
     # transcribe
     p_tra = subparsers.add_parser("transcribe")
     p_tra.add_argument("--audio", required=True)
+
+    # listen (microphone speech-to-text)
+    p_lis = subparsers.add_parser("listen", help="Listen to microphone and transcribe speech to text")
+    p_lis.add_argument("duration_pos", nargs="?", type=float, default=None, help="Listening duration in seconds")
+    p_lis.add_argument("--duration", "-d", type=float, default=4.0, help="Listening duration in seconds (default 4)")
+
+    # record (microphone audio capture)
+    p_rec = subparsers.add_parser("record", help="Record audio from default microphone to WAV")
+    p_rec.add_argument("duration_pos", nargs="?", type=float, default=None, help="Recording duration in seconds")
+    p_rec.add_argument("--duration", "-d", type=float, default=4.0, help="Recording duration in seconds (default 4)")
+    p_rec.add_argument("--path", default=None, help="Output WAV file path")
 
     # browse
     p_browse = subparsers.add_parser("browse", aliases=["search", "web"])
@@ -2580,6 +2654,12 @@ def main():
         result = speak(text_target, voice=args.voice)
     elif args.command == "transcribe":
         result = transcribe_audio(args.audio)
+    elif args.command == "listen":
+        dur = args.duration_pos or args.duration
+        result = listen(dur)
+    elif args.command == "record":
+        dur = args.duration_pos or args.duration
+        result = record_microphone(dur, args.path)
     else:
         parser.print_help()
     if isinstance(result, dict):
