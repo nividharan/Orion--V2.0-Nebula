@@ -1076,27 +1076,42 @@ def browse_web(query_or_url: str, browser: str = None) -> dict:
         if browser_used in ("chrome", "google chrome"):
             chrome_app = find_installed_application("chrome")
             if chrome_app.get("status") == "ok":
-                cmd = f'"{chrome_app["Path"]}" "{target_url}"'
+                cmd = f'"{chrome_app["Path"]}" --new-window "{target_url}"'
             else:
-                cmd = f'start chrome "{target_url}"'
+                cmd = f'start chrome --new-window "{target_url}"'
             subprocess.Popen(cmd, shell=True)
         elif browser_used in ("edge", "msedge", "microsoft edge"):
             edge_app = find_installed_application("msedge")
             if edge_app.get("status") == "ok":
-                cmd = f'"{edge_app["Path"]}" "{target_url}"'
+                cmd = f'"{edge_app["Path"]}" --new-window "{target_url}"'
             else:
-                cmd = f'start msedge "{target_url}"'
+                cmd = f'start msedge --new-window "{target_url}"'
             subprocess.Popen(cmd, shell=True)
         else:
-            try:
-                os.startfile(target_url)
-            except Exception:
-                import webbrowser
-                webbrowser.open(target_url)
+            # Check for installed Chrome or Edge first for crisp foreground window rendering
+            chrome_app = find_installed_application("chrome")
+            if chrome_app.get("status") == "ok":
+                cmd = f'"{chrome_app["Path"]}" --new-window "{target_url}"'
+                subprocess.Popen(cmd, shell=True)
+                browser_used = "chrome"
+            else:
+                try:
+                    os.startfile(target_url)
+                except Exception:
+                    import webbrowser
+                    webbrowser.open(target_url)
+
+        # Force foreground activation so window is physically visible on user's screen
+        time.sleep(0.15)
+        for b_target in ([browser_used, "chrome", "msedge", "edge"] if browser_used else ["chrome", "msedge"]):
+            f_res = focus_window(b_target)
+            if f_res.get("status") in ("ok", "success"):
+                break
 
         elapsed = round((time.time() - start_time) * 1000, 2)
         return {
-            "status": "ok",
+            "status": "success",
+            "success": True,
             "action": "browse",
             "input": query_or_url,
             "resolved_url": target_url,

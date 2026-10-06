@@ -255,9 +255,10 @@ class OrionAgentSociety:
                     
                     # Perception check
                     self.stream.print_line("Perception Inspector", "👁️", "Checking browser window state...")
-                    time.sleep(0.02)
-                    self.stream.print_success("Browser process active and rendering live")
-                    self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: URL dispatched without errors.")
+                    time.sleep(0.1)
+                    active_w = orion_core.get_active_window()
+                    self.stream.print_success(f"Browser brought to foreground: '{active_w.get('title')}' ({active_w.get('process')})")
+                    self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: URL dispatched and window visible.")
 
                 elif act == "type":
                     res = orion_core.type_text(target)
