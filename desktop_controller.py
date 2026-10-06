@@ -2540,10 +2540,25 @@ def main():
     # console / shell / interactive
     subparsers.add_parser("console", aliases=["shell", "interactive"], help="Start interactive terminal console")
 
+    # team / run / workflow (AutoGen multi-agent collaboration)
+    p_team = subparsers.add_parser("team", aliases=["run", "workflow"], help="Execute goal with AutoGen 5-Agent Collaborative Society")
+    p_team.add_argument("goal", nargs="+", help="Goal prompt for the agent society")
+
     args = parser.parse_args()
 
-    if not args.command or args.command in ("console", "shell", "interactive"):
+    if not args.command:
+        parser.print_help()
+        return
+
+    if args.command in ("console", "shell", "interactive"):
         run_interactive_console()
+        return
+
+    if args.command in ("team", "run", "workflow"):
+        goal_text = " ".join(args.goal)
+        import orion_autogen
+        society = orion_autogen.OrionAgentSociety(use_voice=True)
+        society.run_collaborative_workflow(goal_text)
         return
 
     if args.mcp:

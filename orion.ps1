@@ -6,12 +6,20 @@ param(
 $PythonScript = "c:\skill\desktop_controller.py"
 $ApiBase = "http://127.0.0.1:8765"
 
+$AutoGenScript = "c:\skill\orion_autogen.py"
+
 if (-not $ArgsList -or $ArgsList.Count -eq 0) {
-    & python $PythonScript console
+    & python $PythonScript --help
     return
 }
 
 $firstArg = $ArgsList[0].ToLower()
+
+if ($firstArg -in @("team", "run", "workflow", "autogen")) {
+    $teamPrompt = ($ArgsList[1..($ArgsList.Count - 1)] -join " ").Trim()
+    & python $AutoGenScript $teamPrompt
+    return
+}
 
 if ($firstArg -in @("console", "shell", "interactive", "terminal")) {
     & python $PythonScript console
@@ -139,6 +147,12 @@ if ($firstArg -in $controllerCmds) {
 
 $rawPrompt = ($ArgsList -join " ").Trim()
 
+# Compound multi-step goal -> route to AutoGen Multi-Agent collaborative society!
+if ($rawPrompt -match '\b(?:and|then)\b') {
+    & python $AutoGenScript $rawPrompt
+    return
+}
+
 # 1. Browser Commands: open/browse/search/goto (chrome|edge|browser)? <url or query>
 if ($rawPrompt -match '^(?:open|browse|search|goto|go\s+to)\s+(?:in\s+)?(?:(chrome|edge|browser)\s+)?(?:for\s+)?(.+)$') {
     $matchedBrowser = if ($Matches[1] -and $Matches[1] -ne "browser") { $Matches[1] } else { $null }
@@ -213,8 +227,8 @@ if ($rawPrompt -match '^(?:speak|say|tts)\s+(.+)$') {
 }
 
 # ==============================================================================
-# NATURAL LANGUAGE AGENT DELEGATION (AGY CLI FALLBACK)
+# NATURAL LANGUAGE MULTI-AGENT COLLABORATION (AUTOGEN TEAM)
 # ==============================================================================
 
-Write-Host "[Orion v2.0 Nebula] Delegating command to Antigravity AI Agent: $rawPrompt" -ForegroundColor Cyan
-& agy -p $rawPrompt --dangerously-skip-permissions
+& python $AutoGenScript $rawPrompt
+return

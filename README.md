@@ -159,9 +159,21 @@ orion status                                    # Full system status JSON
 orion shot                                      # Instant screen capture
 ```
 
-### Natural Language AI Tasks
+### Natural Language & AutoGen Multi-Agent Workflows
 ```powershell
-orion "<natural language prompt>"               # Autonomous multi-step execution
+# Run with 5-agent collaborative team (line-by-line streaming)
+orion team "open chrome to https://github.com, launch notepad, and announce status"
+
+# Or using plain English directly
+orion "open notepad, type Hello AutoGen, and announce completion"
+```
+
+### Microphone Audio Input & Speech
+```powershell
+orion listen                                    # Listen to microphone and transcribe speech
+orion listen 6                                  # Listen for 6 seconds
+orion record 5                                  # Record 5 seconds of microphone audio to WAV
+orion transcribe --audio "meeting.wav"          # Transcribe audio file
 ```
 
 ---
