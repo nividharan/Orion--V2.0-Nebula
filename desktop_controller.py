@@ -879,16 +879,21 @@ def focus_window(query: str, capture_after: bool = False, auto_launch: bool = Fa
     }
 
 
-def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec: float = 8.0) -> dict:
+def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec: float = 8.0, extra_args: str = "") -> dict:
     """
     Universally launches ANY application and ensures it opens and appears on the live screen.
     Discovers Store apps, Win32 apps, Registry apps, and PATH executables.
     Cleans any windowless zombie processes that block GUI rendering.
     """
+    app_lower = app_name.lower().strip()
+    if app_lower in ("chrome", "google chrome", "msedge", "edge", "browser") and extra_args:
+        return browse_web(extra_args, browser=app_name)
+
     resolved = find_installed_application(app_name)
     window_title_hint = resolved.get("window_hint", app_name)
     launch_cmd = resolved.get("launch_cmd", f"start {app_name}")
-    app_lower = app_name.lower().strip()
+    if extra_args:
+        launch_cmd = f"{launch_cmd} {extra_args}"
     short_hint = app_lower.replace(".exe", "")
 
     # Check if a VISIBLE window already exists
@@ -978,6 +983,111 @@ def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec:
 
 
 # ==============================================================================
+# BROWSER & WEB SEARCH ENGINE (<50ms DIRECT LAUNCH)
+# ==============================================================================
+
+PORTAL_MAP = {
+    "swayam nptel": "https://swayam.gov.in/nc_details/NPTEL",
+    "nptel": "https://nptel.ac.in/",
+    "swayam": "https://swayam.gov.in/",
+    "github": "https://github.com/",
+    "youtube": "https://www.youtube.com/",
+    "gmail": "https://mail.google.com/",
+    "google": "https://www.google.com/",
+    "chatgpt": "https://chatgpt.com/",
+    "gemini": "https://gemini.google.com/",
+    "reddit": "https://www.reddit.com/",
+    "wikipedia": "https://www.wikipedia.org/",
+    "stackoverflow": "https://stackoverflow.com/",
+    "coursera": "https://www.coursera.org/",
+    "udemy": "https://www.udemy.com/",
+    "linkedin": "https://www.linkedin.com/",
+    "twitter": "https://x.com/",
+    "x": "https://x.com/"
+}
+
+def resolve_web_target(query_or_url: str) -> str:
+    """Smart URL/Query Resolver for portals, direct domains, and search queries."""
+    import urllib.parse
+    import re
+
+    clean = query_or_url.strip()
+    if not clean:
+        return "https://www.google.com"
+
+    clean_lower = clean.lower()
+
+    # 1. Exact or prefix/suffix match in known portal directory
+    for portal_name, portal_url in PORTAL_MAP.items():
+        if clean_lower == portal_name or clean_lower.startswith(portal_name + " ") or clean_lower.endswith(" " + portal_name):
+            return portal_url
+
+    # 2. Direct web URLs
+    if clean_lower.startswith(("http://", "https://")):
+        return clean
+    if clean_lower.startswith(("www.", "ftp.")):
+        return f"https://{clean}"
+
+    # 3. Domain detection (e.g. *.gov.in, *.edu, *.com, *.org, *.net, *.io, *.in)
+    domain_pattern = r"^[a-zA-Z0-9\-\.]+\.(?:com|org|net|gov\.in|ac\.in|edu|io|in|co|ai|dev|app|org\.in|info|biz)(?:/.*)?$"
+    if re.search(domain_pattern, clean_lower):
+        return f"https://{clean}"
+
+    # 4. Search query
+    return f"https://www.google.com/search?q={urllib.parse.quote_plus(clean)}"
+
+def browse_web(query_or_url: str, browser: str = None) -> dict:
+    """
+    Launches browser natively via subprocess/os.startfile in <50ms without GUI clicking loops.
+    """
+    target_url = resolve_web_target(query_or_url)
+    start_time = time.time()
+    browser_used = browser.lower() if browser else "default"
+
+    try:
+        if browser_used in ("chrome", "google chrome"):
+            chrome_app = find_installed_application("chrome")
+            if chrome_app.get("status") == "ok":
+                cmd = f'"{chrome_app["Path"]}" "{target_url}"'
+            else:
+                cmd = f'start chrome "{target_url}"'
+            subprocess.Popen(cmd, shell=True)
+        elif browser_used in ("edge", "msedge", "microsoft edge"):
+            edge_app = find_installed_application("msedge")
+            if edge_app.get("status") == "ok":
+                cmd = f'"{edge_app["Path"]}" "{target_url}"'
+            else:
+                cmd = f'start msedge "{target_url}"'
+            subprocess.Popen(cmd, shell=True)
+        else:
+            try:
+                os.startfile(target_url)
+            except Exception:
+                import webbrowser
+                webbrowser.open(target_url)
+
+        elapsed = round((time.time() - start_time) * 1000, 2)
+        return {
+            "status": "ok",
+            "action": "browse",
+            "input": query_or_url,
+            "resolved_url": target_url,
+            "browser": browser_used,
+            "elapsed_ms": elapsed,
+            "message": f"Successfully launched '{target_url}' in {browser_used} browser in {elapsed}ms."
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "action": "browse",
+            "input": query_or_url,
+            "resolved_url": target_url,
+            "browser": browser_used,
+            "error": str(e)
+        }
+
+
+# ==============================================================================
 # CONTINUOUS BATCH EXECUTION PIPELINE (OPTION D CORE)
 # ==============================================================================
 
@@ -1009,6 +1119,12 @@ def run_batch_sequence(steps: list, take_final_checkpoint: bool = True, halt_on_
                         "reason": f"Failed to launch application '{step.get('app')}': {step_res['result'].get('error')}",
                         "log": log
                     }
+
+            elif act in ("browse", "search", "web"):
+                step_res["result"] = browse_web(
+                    query_or_url=step.get("query", step.get("url", "")),
+                    browser=step.get("browser")
+                )
 
             elif act in ("port", "check_port"):
                 port_num = int(step.get("port", 9876))
@@ -1502,14 +1618,25 @@ class MonitorHTTPHandler(http.server.BaseHTTPRequestHandler):
                 result = hotkey(*payload.get("keys", []))
             elif act == "focus":
                 result = focus_window(payload.get("title", ""), auto_launch=payload.get("auto_launch", True))
+            elif act in ("browse", "search", "web"):
+                result = browse_web(payload.get("query") or payload.get("url", ""), browser=payload.get("browser"))
             elif act == "move":
                 result = move_mouse(payload.get("x"), payload.get("y"), payload.get("duration", 0.15))
-            elif act == "open":
-                result = launch_application(payload.get("app", ""))
+            elif act in ("open", "launch"):
+                result = launch_application(payload.get("app", ""), extra_args=payload.get("extra_args", payload.get("args", "")))
             elif act == "speak":
                 result = speak(payload.get("text", ""))
             else:
                 result = {"status": "error", "error": f"Unknown action: {act}"}
+
+        elif self.path in ("/browse", "/api/browse"):
+            result = browse_web(payload.get("query") or payload.get("url", ""), browser=payload.get("browser"))
+
+        elif self.path in ("/focus", "/api/focus"):
+            result = focus_window(payload.get("title", ""), auto_launch=payload.get("auto_launch", True))
+
+        elif self.path in ("/speak", "/api/speak"):
+            result = speak(payload.get("text", ""))
 
         elif self.path in ("/batch", "/api/batch"):
             steps = payload.get("steps", [])
@@ -1605,6 +1732,46 @@ class MonitorHTTPHandler(http.server.BaseHTTPRequestHandler):
         elif self.path in ("/events", "/api/events"):
             events = monitor.event_history
             data = json.dumps({"events": events}, indent=2).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith(("/browse", "/api/browse")):
+            import urllib.parse
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            q = params.get("q", params.get("query", [""]))[0]
+            browser = params.get("browser", [None])[0]
+            result = browse_web(q, browser=browser)
+            data = json.dumps(result, indent=2).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith(("/focus", "/api/focus")):
+            import urllib.parse
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            title = params.get("title", params.get("t", [""]))[0]
+            result = focus_window(title)
+            data = json.dumps(result, indent=2).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith(("/speak", "/api/speak")):
+            import urllib.parse
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            text = params.get("text", params.get("t", [""]))[0]
+            result = speak(text)
+            data = json.dumps(result, indent=2).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -1914,19 +2081,27 @@ def main():
 
     # focus
     p_foc = subparsers.add_parser("focus")
-    p_foc.add_argument("--title", required=True)
+    p_foc.add_argument("title_pos", nargs="*", default=None, help="Window title query (positional)")
+    p_foc.add_argument("--title", default=None, help="Window title query")
 
     # speak
     p_spk = subparsers.add_parser("speak")
-    p_spk.add_argument("--text", required=True)
+    p_spk.add_argument("text_pos", nargs="*", default=None, help="Message text to speak (positional)")
+    p_spk.add_argument("--text", default=None, help="Message text to speak")
 
     # transcribe
     p_tra = subparsers.add_parser("transcribe")
     p_tra.add_argument("--audio", required=True)
 
+    # browse
+    p_browse = subparsers.add_parser("browse", aliases=["search", "web"])
+    p_browse.add_argument("query", nargs="+", help="URL, query string, or portal name")
+    p_browse.add_argument("--browser", choices=["chrome", "edge", "default"], default=None, help="Target browser")
+
     # launch / open
     p_launch = subparsers.add_parser("launch", aliases=["open"])
     p_launch.add_argument("app", help="Application name or executable command")
+    p_launch.add_argument("extra_args", nargs="*", default=None, help="Trailing arguments or URL for the application")
     p_launch.add_argument("--timeout", type=float, default=8.0)
 
     # port / check_port
@@ -1976,7 +2151,7 @@ def main():
     elif args.command == "task":
         spec = {}
         if args.file and os.path.exists(args.file):
-            with open(args.file, "r", encoding="utf-8") as f:
+            with open(args.file, "r", encoding="utf-8-sig") as f:
                 spec = json.load(f)
         elif args.json_data:
             spec = json.loads(args.json_data)
@@ -2018,7 +2193,11 @@ def main():
     elif args.command in ("screenshot", "shot"):
         result = take_screenshot(args.path)
     elif args.command in ("launch", "open"):
-        result = launch_application(args.app, timeout_sec=args.timeout)
+        extra_str = " ".join(args.extra_args).strip() if args.extra_args else ""
+        result = launch_application(args.app, timeout_sec=args.timeout, extra_args=extra_str)
+    elif args.command in ("browse", "search", "web"):
+        query_str = " ".join(args.query).strip()
+        result = browse_web(query_str, browser=args.browser)
     elif args.command in ("port", "check_port"):
         result = check_port(args.port_num, host=args.host)
     elif args.command == "move":
@@ -2050,9 +2229,11 @@ def main():
     elif args.command == "active_window":
         result = get_active_window()
     elif args.command == "focus":
-        result = focus_window(args.title)
+        title_target = args.title or (" ".join(args.title_pos).strip() if args.title_pos else "")
+        result = focus_window(title_target)
     elif args.command == "speak":
-        result = speak(args.text)
+        text_target = args.text or (" ".join(args.text_pos).strip() if args.text_pos else "")
+        result = speak(text_target)
     elif args.command == "transcribe":
         result = transcribe_audio(args.audio)
     else:
