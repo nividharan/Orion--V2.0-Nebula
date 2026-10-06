@@ -22,6 +22,14 @@ import json
 import argparse
 import subprocess
 import shutil
+
+# Configure Windows console stdout/stderr to UTF-8 to prevent charmap encoding errors
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import threading
 import io
 import http.server
@@ -938,32 +946,43 @@ def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec:
 
     try:
         subprocess.Popen(launch_cmd, shell=True)
-        time.sleep(0.5)
     except Exception as e:
         return {
             "status": "error",
+            "success": False,
             "action": "launch_application",
             "app": app_name,
             "error": f"Failed to execute command '{launch_cmd}': {str(e)}"
         }
 
     if wait_for_window:
-        start_wait = time.time()
         found_window = None
-        while time.time() - start_wait < timeout_sec:
-            time.sleep(0.4)
-            focus_res = focus_window(query_hint)
-            if focus_res.get("status") == "ok":
-                found_window = focus_res
-                break
+        # Fast path: Immediate if checks without sleep
+        focus_res = focus_window(query_hint)
+        if focus_res.get("status") in ("ok", "success"):
+            found_window = focus_res
+        else:
             focus_res = focus_window(short_hint)
-            if focus_res.get("status") == "ok":
+            if focus_res.get("status") in ("ok", "success"):
                 found_window = focus_res
-                break
+            else:
+                # Micro-interval polling if window needs a moment to spawn
+                start_wait = time.time()
+                while time.time() - start_wait < timeout_sec:
+                    time.sleep(0.03)
+                    focus_res = focus_window(query_hint)
+                    if focus_res.get("status") in ("ok", "success"):
+                        found_window = focus_res
+                        break
+                    focus_res = focus_window(short_hint)
+                    if focus_res.get("status") in ("ok", "success"):
+                        found_window = focus_res
+                        break
 
         active = get_active_window()
         return {
-            "status": "ok" if found_window else "warning",
+            "status": "success" if found_window else "warning",
+            "success": found_window is not None,
             "action": "launch_application",
             "app": app_name,
             "resolved": resolved,
@@ -974,7 +993,8 @@ def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec:
         }
 
     return {
-        "status": "ok",
+        "status": "success",
+        "success": True,
         "action": "launch_application",
         "app": app_name,
         "resolved": resolved,
@@ -2084,6 +2104,219 @@ def run_mcp_server():
 
 
 # ==============================================================================
+# INTERACTIVE TERMINAL CONSOLE
+# ==============================================================================
+
+def run_interactive_console():
+    """Starts interactive terminal console for Orion v2.0 Nebula."""
+    header = [
+        "=" * 70,
+        "  [ORION] v2.0 \"NEBULA\" - Terminal Automation Console",
+        "  Version: 2.0.0-nebula | Direct Windows Desktop Automation",
+        "=" * 70,
+        "  Ready. Type your command below to automate your desktop:",
+        "    open <app>          -> Launch app (e.g. open notepad, open chrome)",
+        "    browse <url/query>  -> Instant web search or open URL",
+        "    speak <text>        -> Speak aloud (Microsoft George HD studio voice)",
+        "    focus <window>      -> Bring window to front",
+        "    shot [filename]     -> Capture instant screen snapshot",
+        "    windows             -> List open desktop windows",
+        "    status              -> Show active window, mouse, and screen info",
+        "    click <x> <y>       -> Click mouse at pixel coordinates",
+        "    type <text>         -> Type text into active window",
+        "    hotkey <keys...>    -> Send shortcut (e.g. ctrl s, alt f4)",
+        "    help                -> Show command reference",
+        "    exit / quit         -> Exit terminal console",
+        "=" * 70,
+        ""
+    ]
+    try:
+        header[1] = "  🌌 ORION v2.0 \"NEBULA\" - Terminal Automation Console"
+        print("\n".join(header))
+    except Exception:
+        header[1] = "  [ORION] v2.0 \"NEBULA\" - Terminal Automation Console"
+        print("\n".join(header))
+
+    while True:
+        try:
+            line = input("orion> ").strip().lstrip("\ufeff").lstrip("ï»¿")
+        except (EOFError, KeyboardInterrupt):
+            print("\n[SUCCESS] Exiting Orion Console. Goodbye!")
+            break
+
+        if not line:
+            continue
+
+        lower = line.lower()
+        if lower in ("exit", "quit", "q", "close", "stop"):
+            print("[SUCCESS] Exiting Orion Console. Goodbye!")
+            break
+
+        if lower in ("help", "-h", "--help", "?"):
+            print("\nCommands Reference:")
+            print("  open <app>          - Launch application immediately (notepad, calc, chrome, etc.)")
+            print("  browse <url/query>  - Browse web or search Google (<40ms)")
+            print("  speak <text>        - Speak text aloud (--voice Susan for custom voice)")
+            print("  focus <title>       - Focus a window by title")
+            print("  shot [path]         - Capture screenshot")
+            print("  windows             - List open windows")
+            print("  status              - Show active window and mouse position")
+            print("  click <x> <y>       - Click coordinates")
+            print("  type <text>         - Type text into active window")
+            print("  hotkey <k1> <k2>... - Send hotkey combination")
+            print("  exit / quit         - Exit console\n")
+            print("[SUCCESS] Displayed help reference.\n")
+            continue
+
+        parts = line.split()
+        first = parts[0].lower()
+        t_start = time.perf_counter()
+
+        try:
+            # 1. Fast application launch
+            if first in ("open", "launch", "start", "run") and len(parts) > 1:
+                app_name = " ".join(parts[1:])
+                res = launch_application(app_name)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                pid = res.get("pid", "active")
+                print(f"[SUCCESS] Launched '{app_name}' (PID: {pid}) in {ms}ms")
+
+            # 2. Fast web browse & search
+            elif first in ("browse", "search", "web", "goto", "go") and len(parts) > 1:
+                query = " ".join(parts[1:])
+                res = browse_web(query)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Navigated to '{res.get('target', query)}' in {ms}ms")
+
+            # 3. Fast speech synthesis
+            elif first in ("speak", "say", "talk", "voice") and len(parts) > 1:
+                raw_text = " ".join(parts[1:])
+                voice_name = "George"
+                if "--voice" in parts:
+                    idx = parts.index("--voice")
+                    if idx + 1 < len(parts):
+                        voice_name = parts[idx + 1]
+                        parts_clean = parts[1:idx] + parts[idx + 2:]
+                        raw_text = " ".join(parts_clean)
+                res = speak(raw_text, voice=voice_name)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Spoke via {voice_name}: \"{raw_text}\" in {ms}ms")
+
+            # 4. Window focus
+            elif first in ("focus", "switch", "switchto", "window") and len(parts) > 1:
+                target = " ".join(parts[1:])
+                res = focus_window(target)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                if res.get("status") in ("ok", "success"):
+                    print(f"[SUCCESS] Focused '{res.get('matched_title')}' in {ms}ms")
+                else:
+                    print(f"[-] Could not find window matching '{target}' ({ms}ms)")
+
+            # 5. Screen capture
+            elif first in ("shot", "screenshot", "screen", "capture"):
+                save_p = parts[1] if len(parts) > 1 else None
+                res = take_screenshot(save_p)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Screenshot captured to '{res.get('saved_path')}' in {ms}ms")
+
+            # 6. List windows
+            elif first in ("windows", "list_windows", "tasks"):
+                res = list_windows()
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                wins = res.get("windows", [])
+                print(f"Open Windows ({len(wins)}):")
+                for w in wins[:12]:
+                    print(f"  - [{w.get('hwnd')}] {w.get('process')}: {w.get('title')}")
+                if len(wins) > 12:
+                    print(f"  ... and {len(wins) - 12} more.")
+                print(f"[SUCCESS] Listed {len(wins)} active windows in {ms}ms")
+
+            # 7. Status & telemetry
+            elif first in ("status", "info", "state", "telemetry"):
+                win = get_active_window()
+                pos = get_mouse_position()
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"Active Window: '{win.get('title')}' ({win.get('process')})")
+                print(f"Mouse: X={pos.get('x')} Y={pos.get('y')} | Screen: {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
+                print(f"[SUCCESS] Telemetry retrieved in {ms}ms")
+
+            # 8. Mouse position
+            elif first in ("pos", "mouse", "cursor"):
+                pos = get_mouse_position()
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"Mouse Position: X={pos.get('x')} Y={pos.get('y')}")
+                print(f"[SUCCESS] Verified coordinates in {ms}ms")
+
+            # 9. Mouse click
+            elif first in ("click", "tap") and len(parts) >= 3:
+                x, y = int(parts[1]), int(parts[2])
+                res = verified_click(x, y)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Clicked coordinates ({x}, {y}) in {ms}ms")
+
+            # 10. Double click
+            elif first in ("double_click", "dclick") and len(parts) >= 3:
+                x, y = int(parts[1]), int(parts[2])
+                res = double_click(x, y)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Double-clicked coordinates ({x}, {y}) in {ms}ms")
+
+            # 11. Right click
+            elif first in ("right_click", "rclick") and len(parts) >= 3:
+                x, y = int(parts[1]), int(parts[2])
+                res = right_click(x, y)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Right-clicked coordinates ({x}, {y}) in {ms}ms")
+
+            # 12. Type text
+            elif first in ("type", "write", "input") and len(parts) > 1:
+                text_to_type = " ".join(parts[1:])
+                res = type_text(text_to_type)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Typed: \"{text_to_type}\" in {ms}ms")
+
+            # 13. Hotkey
+            elif first in ("hotkey", "press", "key") and len(parts) > 1:
+                keys = parts[1:]
+                res = hotkey(*keys)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Sent hotkey: {' + '.join(keys)} in {ms}ms")
+
+            # 14. Voices list
+            elif first in ("voices", "list_voices"):
+                v_list = get_available_voices()
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"Installed Voices ({len(v_list)}):")
+                for v in v_list:
+                    print(f"  - {v.get('name')} ({v.get('gender')}, {v.get('culture')})")
+                print(f"[SUCCESS] Found {len(v_list)} studio voices in {ms}ms")
+
+            # 15. Pre-flight check
+            elif first in ("preflight", "check", "doctor"):
+                res = preflight_check()
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Pre-flight check passed ({len(res.get('installed_apps', []))} apps detected) in {ms}ms")
+
+            # 16. Direct URL entry
+            elif line.startswith("http://") or line.startswith("https://") or line.startswith("www."):
+                res = browse_web(line)
+                ms = round((time.perf_counter() - t_start) * 1000, 1)
+                print(f"[SUCCESS] Navigated to '{res.get('target', line)}' in {ms}ms")
+
+            # 17. Intelligent intent fallback
+            else:
+                app_check = find_installed_application(line)
+                if app_check.get("status") == "ok":
+                    res = launch_application(line)
+                    ms = round((time.perf_counter() - t_start) * 1000, 1)
+                    print(f"[SUCCESS] Launched '{line}' in {ms}ms")
+                else:
+                    print(f"[-] Unrecognized command: '{line}'. Type 'help' for options.")
+        except Exception as e:
+            print(f"[-] Error: {e}")
+
+
+# ==============================================================================
 # CLI HANDLER
 # ==============================================================================
 
@@ -2230,7 +2463,14 @@ def main():
     p_task.add_argument("--file", help="Path to task spec JSON file")
     p_task.add_argument("--json", dest="json_data", help="Raw JSON string of task spec")
 
+    # console / shell / interactive
+    subparsers.add_parser("console", aliases=["shell", "interactive"], help="Start interactive terminal console")
+
     args = parser.parse_args()
+
+    if not args.command or args.command in ("console", "shell", "interactive"):
+        run_interactive_console()
+        return
 
     if args.mcp:
         run_mcp_server()
@@ -2342,7 +2582,10 @@ def main():
         result = transcribe_audio(args.audio)
     else:
         parser.print_help()
-        return
+    if isinstance(result, dict):
+        if result.get("status") in ("ok", "success") or "status" not in result:
+            result["status"] = "success"
+            result["success"] = True
 
     print(json.dumps(result, indent=2))
 

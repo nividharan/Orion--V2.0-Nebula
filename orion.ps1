@@ -7,14 +7,19 @@ $PythonScript = "c:\skill\desktop_controller.py"
 $ApiBase = "http://127.0.0.1:8765"
 
 if (-not $ArgsList -or $ArgsList.Count -eq 0) {
-    & cmd /c "$PSScriptRoot\orion.cmd help"
+    & python $PythonScript console
     return
 }
 
 $firstArg = $ArgsList[0].ToLower()
 
+if ($firstArg -in @("console", "shell", "interactive", "terminal")) {
+    & python $PythonScript console
+    return
+}
+
 if ($firstArg -in @("help", "--help", "-h")) {
-    & cmd /c "$PSScriptRoot\orion.cmd help"
+    & python $PythonScript --help
     return
 }
 

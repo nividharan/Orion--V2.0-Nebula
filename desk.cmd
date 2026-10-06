@@ -6,7 +6,7 @@ REM Orion v2.0 "Nebula" - Universal Autonomous Desktop & Perception Engine
 REM ==============================================================================
 
 if "%~1"=="" (
-    python c:\skill\desktop_controller.py --help
+    python "%~dp0desktop_controller.py" console
     exit /b 0
 )
 
