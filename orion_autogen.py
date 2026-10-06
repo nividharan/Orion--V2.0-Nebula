@@ -89,15 +89,29 @@ class OrionAgentSociety:
         if not clauses:
             clauses = [raw]
 
+        portal_context = None
+        for c in clauses:
+            cl_check = c.lower()
+            if "google play" in cl_check or "play store" in cl_check:
+                portal_context = "google play"
+                break
+
         for clause in clauses:
             cl = clause.lower()
 
             # 1. Web browsing / search intent
-            if any(k in cl for k in ["browse", "search", "google", "website", "url", "github", "http://", "https://"]):
+            if any(k in cl for k in ["browse", "search", "google", "website", "url", "github", "http://", "https://", "play"]):
                 # Extract query or URL
                 target = clause
                 target = re.sub(r'^(?:please\s+)?(?:browse|search|open|go to|goto|look up)\s+(?:for\s+)?(?:in\s+(?:chrome|edge)\s+)?', '', target, flags=re.I).strip()
                 browser = "chrome" if "chrome" in cl else ("edge" if "edge" in cl else None)
+
+                # Context-aware query enrichment
+                if portal_context == "google play" and ("free fire" in cl or "game" in cl or "search" in cl):
+                    clean_term = re.sub(r'^(?:search\s+for|search|find|open)\s+', '', target, flags=re.I).strip()
+                    if clean_term and clean_term != "google play":
+                        target = f"https://play.google.com/store/search?q={clean_term}&c=apps"
+
                 steps.append({
                     "agent": "Desktop Executor",
                     "action": "browse",

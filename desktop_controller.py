@@ -1020,7 +1020,10 @@ PORTAL_MAP = {
     "udemy": "https://www.udemy.com/",
     "linkedin": "https://www.linkedin.com/",
     "twitter": "https://x.com/",
-    "x": "https://x.com/"
+    "x": "https://x.com/",
+    "google play": "https://play.google.com/store/games",
+    "play store": "https://play.google.com/store/games",
+    "playstore": "https://play.google.com/store/games"
 }
 
 def resolve_web_target(query_or_url: str) -> str:
@@ -1034,8 +1037,16 @@ def resolve_web_target(query_or_url: str) -> str:
 
     clean_lower = clean.lower()
 
-    # 1. Exact or prefix/suffix match in known portal directory
-    for portal_name, portal_url in PORTAL_MAP.items():
+    # Special handling for Google Play Store search queries
+    if ("google play" in clean_lower or "play store" in clean_lower or "playstore" in clean_lower) and any(w in clean_lower for w in ["search", "find", "for", "game", "app"]):
+        sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on)\s+', '', clean, flags=re.I)
+        sub_query = re.sub(r'(?:in|on)?\s*(?:google\s*play|play\s*store|playstore)', '', sub_query, flags=re.I).strip()
+        sub_query = re.sub(r'^(?:for|search\s*for)\s+', '', sub_query, flags=re.I).strip()
+        if sub_query:
+            return f"https://play.google.com/store/search?q={urllib.parse.quote_plus(sub_query)}&c=apps"
+
+    # 1. Exact or prefix/suffix match in known portal directory (longest match first)
+    for portal_name, portal_url in sorted(PORTAL_MAP.items(), key=lambda x: len(x[0]), reverse=True):
         if clean_lower == portal_name or clean_lower.startswith(portal_name + " ") or clean_lower.endswith(" " + portal_name):
             return portal_url
 
