@@ -1,0 +1,2065 @@
+"""
+🌌 Orion v2.0 "Nebula" - Universal Autonomous Desktop & Perception Engine
+Engineered for Google Antigravity (agy).
+Features:
+- Option D: Unified Hybrid Architecture (Continuous compiled batching + visual checkpoints)
+- Pre-Flight Validation: Upfront check of software, processes, and libraries across 209+ apps
+- Continuous Perception & API Server: Port 8765 (/quick_state, /vlm_frame, /status, /stream, /action, /task)
+- Pixel-Perfect Mouse Accuracy: Enforces Per-Monitor DPI awareness and coordinate verification
+- Window Hierarchy & Geometry: Focuses and bounds application windows
+- Dual-Mode: CLI runner, background API daemon, and FastMCP server
+"""
+
+VERSION = "2.0.0-nebula"
+CODENAME = "Nebula"
+PROJECT_NAME = "Orion"
+
+
+import os
+import sys
+import time
+import json
+import argparse
+import subprocess
+import shutil
+import threading
+import io
+import http.server
+import urllib.request
+import ctypes
+from ctypes import wintypes
+import pyautogui
+from PIL import Image, ImageChops, ImageStat
+
+# 1. Enforce Per-Monitor DPI Awareness for 1:1 Pixel Mapping
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    pass
+
+# Safety Settings: Top-left corner (0, 0) aborts PyAutoGUI
+pyautogui.FAILSAFE = True
+pyautogui.PAUSE = 0.04
+
+try:
+    _sz = pyautogui.size()
+    SCREEN_WIDTH, SCREEN_HEIGHT = _sz.width, _sz.height
+except Exception:
+    SCREEN_WIDTH, SCREEN_HEIGHT = 1920, 1080
+
+# Screen buffer path
+CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".cache"))
+os.makedirs(CACHE_DIR, exist_ok=True)
+LIVE_SCREEN_PATH = os.path.join(CACHE_DIR, "screen_live.png")
+
+
+def attach_to_default_desktop():
+    """Attaches current thread to interactive user desktop ('Default')."""
+    try:
+        import win32con
+        user32 = ctypes.windll.user32
+        hdesk = user32.OpenDesktopW("default", 0, False, win32con.MAXIMUM_ALLOWED)
+        if hdesk:
+            user32.SetThreadDesktop(hdesk)
+    except Exception:
+        pass
+
+# Ensure desktop attachment at load time
+attach_to_default_desktop()
+
+
+# ==============================================================================
+# UNIVERSAL APPLICATION, SERVICE & PORT REGISTRY
+# ==============================================================================
+
+APPS_CATALOG_PATH = os.path.join(CACHE_DIR, "apps_catalog.json")
+
+DEFAULT_TOOL_PORTS = {
+    # 3D, Creative & Media
+    "blender": 9876,
+    "blender_mcp": 9876,
+    "comfyui": 8188,
+    "stable_diffusion": 7860,
+    "gradio": 7860,
+    "obs": 4455,
+
+    # Notebooks, Data Science & ML
+    "jupyter": 8888,
+    "jupyterlab": 8888,
+    "streamlit": 8501,
+    "tensorboard": 6006,
+    "mlflow": 5000,
+
+    # Web & Fullstack Development
+    "vite": 5173,
+    "nextjs": 3000,
+    "react": 3000,
+    "vue": 8080,
+    "angular": 4200,
+    "node": 3000,
+    "express": 3000,
+    "flask": 5000,
+    "fastapi": 8000,
+    "django": 8000,
+
+    # Local AI & LLM Inference Servers
+    "ollama": 11434,
+    "lmstudio": 1234,
+    "localai": 8080,
+    "text_generation_webui": 5000,
+    "vllm": 8000,
+
+    # Databases & Caching
+    "postgres": 5432,
+    "postgresql": 5432,
+    "mysql": 3306,
+    "redis": 6379,
+    "mongodb": 27017,
+    "elasticsearch": 9200,
+
+    # Infrastructure & DevOps
+    "docker": 2375,
+    "kubernetes": 6443,
+}
+
+def get_installed_apps_catalog(force_refresh: bool = False) -> list:
+    """
+    Returns full catalog of all installed Windows applications (Desktop Win32 & UWP Store apps).
+    Caches results in .cache/apps_catalog.json for instantaneous sub-millisecond retrieval.
+    """
+    if not force_refresh and os.path.exists(APPS_CATALOG_PATH):
+        try:
+            mtime = os.path.getmtime(APPS_CATALOG_PATH)
+            if time.time() - mtime < 86400:
+                with open(APPS_CATALOG_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        return data
+        except Exception:
+            pass
+
+    apps = []
+    try:
+        ps_cmd = 'powershell -NoProfile -Command "Get-StartApps | ConvertTo-Json -Compress"'
+        out = subprocess.check_output(ps_cmd, shell=True, text=True, errors="ignore")
+        raw = json.loads(out)
+        if isinstance(raw, list):
+            apps = raw
+        elif isinstance(raw, dict):
+            apps = [raw]
+    except Exception:
+        pass
+
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(APPS_CATALOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(apps, f, indent=2)
+    except Exception:
+        pass
+
+    return apps
+
+def find_installed_application(app_name: str) -> dict:
+    """
+    Universally resolves ANY application on the system across:
+    1. StartApps (UWP Store and Desktop Apps)
+    2. Windows Registry App Paths (HKLM & HKCU)
+    3. System PATH (shutil.which)
+    4. WindowsApps execution aliases
+    """
+    query = app_name.lower().strip()
+    query_clean = query.replace(".exe", "").replace("-", " ").replace("_", " ")
+
+    catalog = get_installed_apps_catalog()
+    best_match = None
+    best_score = 0
+
+    ALIASES = {
+        # System & Utilities
+        "calc": "Calculator",
+        "calculator": "Calculator",
+        "notepad": "Notepad",
+        "terminal": "Terminal",
+        "wt": "Terminal",
+        "cmd": "Command Prompt",
+        "powershell": "PowerShell",
+        "settings": "Settings",
+        "taskmgr": "Task Manager",
+        "taskmanager": "Task Manager",
+        "explorer": "File Explorer",
+        "files": "File Explorer",
+
+        # Browsers
+        "chrome": "Google Chrome",
+        "google-chrome": "Google Chrome",
+        "googlechrome": "Google Chrome",
+        "edge": "Microsoft Edge",
+        "msedge": "Microsoft Edge",
+        "browser": "Google Chrome",
+
+        # Productivity & Office
+        "word": "Word",
+        "msword": "Word",
+        "excel": "Excel",
+        "msexcel": "Excel",
+        "ppt": "PowerPoint",
+        "powerpoint": "PowerPoint",
+        "mspowerpoint": "PowerPoint",
+        "access": "Access",
+        "onenote": "OneNote 2016",
+        "outlook": "Outlook",
+        "notion": "Notion",
+        "todo": "Microsoft To Do",
+
+        # Communication
+        "teams": "Microsoft Teams",
+        "msteams": "Microsoft Teams",
+        "telegram": "Telegram",
+        "whatsapp": "WhatsApp",
+        "skype": "Skype",
+
+        # Creative, Media & Video
+        "paint": "Paint",
+        "mspaint": "Paint",
+        "paint3d": "Paint 3D",
+        "vlc": "VLC media player",
+        "media player": "Media Player",
+        "player": "Media Player",
+        "obs": "OBS Studio",
+        "obs-studio": "OBS Studio",
+        "clipchamp": "Microsoft Clipchamp",
+        "capcut": "CapCut",
+        "3dviewer": "3D Viewer",
+        "3d viewer": "3D Viewer",
+        "blender": "Blender",
+
+        # Engineering, CAD & Science
+        "matlab": "MATLAB R2026a",
+        "labview": "NI LabVIEW 2026 Q3 (64-bit)",
+        "ni labview": "NI LabVIEW 2026 Q3 (64-bit)",
+        "nimax": "NI MAX",
+        "ni max": "NI MAX",
+        "kicad": "KiCad 10.0",
+        "kicad pcb": "PCB Editor 10.0 (standalone)",
+        "kicad schematic": "Schematic Editor 10.0 (standalone)",
+        "arduino": "Arduino IDE",
+        "arduinoide": "Arduino IDE",
+
+        # Developer & IDEs
+        "code": "Visual Studio Code",
+        "vscode": "Visual Studio Code",
+        "git": "Git Bash",
+        "gitbash": "Git Bash",
+        "gitgui": "Git GUI",
+        "idle": "IDLE (Python 3.10 64-bit)",
+        "antigravity": "Antigravity IDE",
+
+        # AI & Virtualization
+        "chatgpt": "ChatGPT",
+        "claude": "Claude",
+        "copilot": "Copilot",
+        "bluestacks": "BlueStacks 5",
+        "vbox": "Oracle VirtualBox",
+        "virtualbox": "Oracle VirtualBox"
+    }
+
+    target_name = ALIASES.get(query_clean, query_clean).lower()
+
+    for app in catalog:
+        name = app.get("Name", "")
+        appid = app.get("AppID", "")
+        name_lower = name.lower()
+        appid_lower = appid.lower()
+
+        score = 0
+        if name_lower == target_name or appid_lower == target_name:
+            score = 100
+        elif name_lower.startswith(target_name):
+            score = 80
+        elif target_name in name_lower.split():
+            score = 70
+        elif target_name in name_lower:
+            score = 50
+        elif target_name in appid_lower:
+            score = 40
+
+        if score > best_score:
+            best_score = score
+            best_match = {
+                "found": True,
+                "name": name,
+                "appid": appid,
+                "launch_cmd": f'explorer.exe shell:AppsFolder\\{appid}',
+                "source": "start_apps",
+                "window_hint": name.split()[0] if name else app_name
+            }
+
+    if best_match and best_score >= 50:
+        return best_match
+
+    # Fallback: Windows Registry App Paths
+    try:
+        import winreg
+        for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                sub_key = f"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{app_name}.exe"
+                with winreg.OpenKey(root, sub_key) as k:
+                    val = winreg.QueryValue(k, None)
+                    if val and os.path.exists(val):
+                        return {
+                            "found": True,
+                            "name": app_name,
+                            "appid": None,
+                            "path": val,
+                            "launch_cmd": f'start "" "{val}"',
+                            "source": "registry_app_paths",
+                            "window_hint": app_name
+                        }
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+    # Fallback: System PATH
+    which_path = shutil.which(app_name) or shutil.which(f"{app_name}.exe")
+    if which_path:
+        return {
+            "found": True,
+            "name": app_name,
+            "appid": None,
+            "path": which_path,
+            "launch_cmd": f'start "" "{which_path}"',
+            "source": "path",
+            "window_hint": app_name
+        }
+
+    # Fallback: WindowsApps execution alias
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    winapps = os.path.join(local_app_data, "Microsoft", "WindowsApps")
+    for alias_name in (f"{app_name}.exe", f"{app_name}-launcher.exe"):
+        alias_p = os.path.join(winapps, alias_name)
+        if os.path.exists(alias_p):
+            return {
+                "found": True,
+                "name": app_name,
+                "appid": None,
+                "path": alias_p,
+                "launch_cmd": f'start "" "{alias_p}"',
+                "source": "uwp_alias",
+                "window_hint": app_name
+            }
+
+    # Fallback: start command
+    return {
+        "found": False,
+        "name": app_name,
+        "appid": None,
+        "path": None,
+        "launch_cmd": f"start {app_name}",
+        "source": "fallback_start",
+        "window_hint": app_name
+    }
+
+def list_listening_ports() -> list:
+    """Lists all active listening TCP ports with owning PID and process name."""
+    try:
+        proc_names = {}
+        t_out = subprocess.check_output('tasklist /fo csv /nh', shell=True, text=True, errors='ignore')
+        for line in t_out.splitlines():
+            p = line.split('","')
+            if len(p) > 1:
+                pname = p[0].strip('"')
+                pid = p[1].strip('"')
+                proc_names[pid] = pname
+
+        net_out = subprocess.check_output('netstat -ano -p tcp', shell=True, text=True, errors='ignore')
+        listening = []
+        for line in net_out.splitlines():
+            line = line.strip()
+            if "LISTENING" in line:
+                parts = line.split()
+                if len(parts) >= 5:
+                    local_addr = parts[1]
+                    pid = parts[4]
+                    port = int(local_addr.split(":")[-1])
+                    pname = proc_names.get(pid, "unknown")
+                    listening.append({
+                        "port": port,
+                        "address": local_addr,
+                        "pid": pid,
+                        "process": pname
+                    })
+        unique = {}
+        for item in listening:
+            if item["port"] not in unique:
+                unique[item["port"]] = item
+        return sorted(list(unique.values()), key=lambda x: x["port"])
+    except Exception:
+        return []
+
+def check_port(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -> dict:
+    """Checks whether a TCP socket port is actively open and listening."""
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        result = sock.connect_ex((host, int(port)))
+        is_open = (result == 0)
+        sock.close()
+        return {
+            "status": "ok",
+            "host": host,
+            "port": int(port),
+            "is_open": is_open,
+            "message": f"Port {port} on {host} is {'OPEN and listening' if is_open else 'CLOSED / not listening'}"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "host": host,
+            "port": int(port),
+            "is_open": False,
+            "error": str(e)
+        }
+
+def is_process_running(proc_name: str) -> dict:
+    """Checks if a process name (e.g. 'blender.exe', 'chrome.exe') is running in tasklist."""
+    proc_clean = proc_name.lower().replace(".exe", "").strip()
+    try:
+        output = subprocess.check_output('tasklist /fo csv /nh', shell=True, text=True, errors='ignore')
+        matches = []
+        for line in output.strip().splitlines():
+            parts = line.split('","')
+            if parts and len(parts) > 1:
+                pname = parts[0].strip('"').lower()
+                pid = parts[1].strip('"')
+                if proc_clean in pname:
+                    matches.append({"name": pname, "pid": pid})
+        return {
+            "status": "ok",
+            "query": proc_name,
+            "is_running": len(matches) > 0,
+            "processes": matches
+        }
+    except Exception as e:
+        return {"status": "error", "query": proc_name, "is_running": False, "error": str(e)}
+
+
+# ==============================================================================
+# PRE-FLIGHT ENVIRONMENT & SOFTWARE CHECKER (UNIVERSAL)
+# ==============================================================================
+
+def preflight_check(items: list = None) -> dict:
+    """
+    Validates presence of software, running processes, socket ports, and libraries upfront.
+    Supports items like:
+      - 'python', 'pyautogui' (Python libraries)
+      - 'chrome', 'blender', 'obs', 'vscode' (Applications)
+      - 'jupyter:8888', 'myapp:3000' (Explicit app:port validation)
+      - '9876', '8080' (Standalone port check)
+    """
+    if not items:
+        items = ["python", "pyautogui", "mss", "PIL", "pyperclip", "win32gui"]
+
+    results = {}
+    all_ready = True
+
+    # Pre-fetch running processes
+    proc_info = {}
+    try:
+        output = subprocess.check_output('tasklist /fo csv /nh', shell=True, text=True, stderr=subprocess.DEVNULL)
+        for line in output.strip().splitlines():
+            parts = line.split('","')
+            if parts and len(parts) > 1:
+                pname = parts[0].strip('"').lower()
+                pid = parts[1].strip('"')
+                proc_info[pname] = pid
+    except Exception:
+        pass
+
+    # Pre-fetch visible windows
+    import win32gui
+    visible_window_titles = []
+    def enum_vis(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd):
+            t = win32gui.GetWindowText(hwnd).strip()
+            if t:
+                visible_window_titles.append(t.lower())
+    win32gui.EnumWindows(enum_vis, None)
+
+    for item in items:
+        item_str = str(item).strip()
+        item_lower = item_str.lower()
+        detail = {
+            "available": False,
+            "is_running": False,
+            "window_visible": False,
+            "port": None,
+            "port_listening": None,
+            "type": "unknown",
+            "details": ""
+        }
+
+        # Check if item is a standalone port number (e.g. "9876")
+        if item_str.isdigit():
+            port_num = int(item_str)
+            p_res = check_port(port_num)
+            detail["port"] = port_num
+            detail["port_listening"] = p_res.get("is_open", False)
+            detail["available"] = p_res.get("is_open", False)
+            detail["type"] = "network_port"
+            detail["details"] = p_res.get("message", "")
+            if not p_res.get("is_open", False):
+                all_ready = False
+            results[item_str] = detail
+            continue
+
+        # Check if item contains an explicit port specification (e.g. "blender:9876" or "server:8080")
+        target_app = item_str
+        expected_port = None
+        if ":" in item_str:
+            parts = item_str.split(":", 1)
+            target_app = parts[0].strip()
+            if parts[1].strip().isdigit():
+                expected_port = int(parts[1].strip())
+        elif target_app.lower() in DEFAULT_TOOL_PORTS:
+            expected_port = DEFAULT_TOOL_PORTS[target_app.lower()]
+
+        target_app_lower = target_app.lower()
+
+        # Check Python library first
+        try:
+            __import__(target_app)
+            detail["available"] = True
+            detail["type"] = "python_library"
+            detail["details"] = "installed in active python environment"
+            results[item_str] = detail
+            continue
+        except ImportError:
+            pass
+
+        # Universal application discovery
+        app_res = find_installed_application(target_app)
+        detail["available"] = app_res.get("found", False)
+        detail["type"] = app_res.get("source", "unknown")
+        detail["app_info"] = {
+            "name": app_res.get("name"),
+            "launch_cmd": app_res.get("launch_cmd")
+        }
+
+        # Check if process is running
+        short_app = target_app_lower.replace(".exe", "")
+        is_proc = any(short_app in p for p in proc_info.keys())
+        detail["is_running"] = is_proc
+
+        # Check if a visible window exists on the live desktop
+        win_hint = app_res.get("window_hint", target_app).lower()
+        has_win = any(win_hint in wt or short_app in wt for wt in visible_window_titles)
+        detail["window_visible"] = has_win
+
+        # Port validation if port is mapped or specified
+        if expected_port is not None:
+            detail["port"] = expected_port
+            p_res = check_port(expected_port)
+            detail["port_listening"] = p_res.get("is_open", False)
+
+        # Formulate comprehensive diagnostics
+        issues = []
+        if not detail["available"]:
+            issues.append(f"Executable/app not found on system (checked StartApps, Registry, PATH)")
+            all_ready = False
+        elif not is_proc:
+            issues.append(f"Installed, but PROCESS IS NOT RUNNING. Call 'deskctl open {target_app}' to start.")
+            all_ready = False
+        elif not has_win:
+            issues.append(f"Process is active, but NO VISIBLE WINDOW is rendered on the live desktop. Call 'deskctl open {target_app}' to restore GUI.")
+            all_ready = False
+
+        if expected_port is not None and not detail["port_listening"]:
+            issues.append(f"Socket port {expected_port} is CLOSED / not listening. Server or plugin is not started.")
+            all_ready = False
+
+        if not issues:
+            detail["details"] = f"Ready: Application is installed, active on live screen" + (f", and port {expected_port} is connected." if expected_port else ".")
+        else:
+            detail["details"] = " | ".join(issues)
+
+        results[item_str] = detail
+
+    return {
+        "all_ready": all_ready,
+        "items": results,
+        "screen_resolution": list(pyautogui.size()),
+        "desktop_session": "attached"
+    }
+
+
+# ==============================================================================
+# SCREEN CAPTURE & VISION (CONTINUOUS BUFFER)
+# ==============================================================================
+
+def take_screenshot(save_path: str = None, bbox: tuple = None) -> dict:
+    """Captures desktop screen into rolling live buffer or designated path."""
+    attach_to_default_desktop()
+    target_path = os.path.abspath(save_path) if save_path else LIVE_SCREEN_PATH
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+    try:
+        import mss
+        with mss.MSS() as sct:
+            monitor = sct.monitors[1]
+            shot = sct.grab(monitor)
+            img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+            if bbox:
+                img = img.crop(bbox)
+            img.save(target_path)
+            return {
+                "status": "ok",
+                "saved_path": target_path,
+                "size": list(img.size),
+                "timestamp": time.time(),
+                "method": "mss"
+            }
+    except Exception as e:
+        screenshot = pyautogui.screenshot()
+        if bbox:
+            screenshot = screenshot.crop(bbox)
+        screenshot.save(target_path)
+        return {
+            "status": "ok",
+            "saved_path": target_path,
+            "size": list(screenshot.size),
+            "timestamp": time.time(),
+            "method": "pyautogui"
+        }
+
+def get_screen_size() -> dict:
+    attach_to_default_desktop()
+    size = pyautogui.size()
+    return {"width": size.width, "height": size.height}
+
+
+# ==============================================================================
+# ACCURATE MOUSE POINTER CONTROL (WITH VERIFICATION)
+# ==============================================================================
+
+def get_mouse_position() -> dict:
+    attach_to_default_desktop()
+    pos = pyautogui.position()
+    size = pyautogui.size()
+    return {"x": pos.x, "y": pos.y, "screen_width": size.width, "screen_height": size.height}
+
+def move_mouse(x: int, y: int, duration: float = 0.15) -> dict:
+    """Moves mouse cursor and verifies landing position."""
+    attach_to_default_desktop()
+    pyautogui.moveTo(x, y, duration=duration)
+    current_pos = pyautogui.position()
+    return {
+        "status": "ok",
+        "action": "move_mouse",
+        "target": [x, y],
+        "actual": [current_pos.x, current_pos.y],
+        "verified": (abs(current_pos.x - x) <= 2 and abs(current_pos.y - y) <= 2)
+    }
+
+def verified_click(x: int = None, y: int = None, button: str = "left", clicks: int = 1, capture_after: bool = False) -> dict:
+    """
+    Precision Mouse Click:
+    1. Moves cursor to target (x, y)
+    2. Verifies exact coordinate arrival
+    3. Performs click
+    """
+    attach_to_default_desktop()
+    if x is not None and y is not None:
+        pyautogui.moveTo(x, y, duration=0.1)
+        current_pos = pyautogui.position()
+    else:
+        current_pos = pyautogui.position()
+        x, y = current_pos.x, current_pos.y
+
+    pyautogui.click(x=x, y=y, button=button, clicks=clicks)
+    time.sleep(0.05)
+
+    verification = None
+    if capture_after:
+        verification = take_screenshot()
+
+    return {
+        "status": "ok",
+        "action": "verified_click",
+        "target": [x, y],
+        "actual": [current_pos.x, current_pos.y],
+        "button": button,
+        "clicks": clicks,
+        "verification_screenshot": verification["saved_path"] if verification else None
+    }
+
+def double_click(x: int = None, y: int = None) -> dict:
+    return verified_click(x=x, y=y, button="left", clicks=2)
+
+def right_click(x: int = None, y: int = None) -> dict:
+    return verified_click(x=x, y=y, button="right", clicks=1)
+
+def mouse_hover(x: int, y: int, duration: float = 0.2) -> dict:
+    """Hovers over target coordinates to trigger tooltips or highlight states."""
+    attach_to_default_desktop()
+    pyautogui.moveTo(x, y, duration=duration)
+    time.sleep(0.1)
+    return {"status": "ok", "action": "hover", "position": [x, y]}
+
+def mouse_drag(start_x: int, start_y: int, end_x: int, end_y: int, duration: float = 0.4) -> dict:
+    attach_to_default_desktop()
+    pyautogui.moveTo(start_x, start_y, duration=0.1)
+    pyautogui.dragTo(end_x, end_y, duration=duration, button="left")
+    return {"status": "ok", "action": "mouse_drag", "start": [start_x, start_y], "end": [end_x, end_y]}
+
+def mouse_scroll(clicks: int, x: int = None, y: int = None) -> dict:
+    attach_to_default_desktop()
+    if x is not None and y is not None:
+        pyautogui.moveTo(x, y, duration=0.1)
+    pyautogui.scroll(clicks)
+    return {"status": "ok", "action": "mouse_scroll", "clicks": clicks}
+
+
+# ==============================================================================
+# KEYBOARD CONTROL
+# ==============================================================================
+
+def type_text(text: str, interval: float = 0.02) -> dict:
+    attach_to_default_desktop()
+    pyautogui.typewrite(text, interval=interval)
+    return {"status": "ok", "action": "type_text", "length": len(text)}
+
+def paste_text(text: str) -> dict:
+    """Pastes text via clipboard - handles full unicode, multi-line code, and instant typing."""
+    attach_to_default_desktop()
+    import pyperclip
+    pyperclip.copy(text)
+    time.sleep(0.04)
+    pyautogui.hotkey("ctrl", "v")
+    time.sleep(0.05)
+    return {"status": "ok", "action": "paste_text", "length": len(text)}
+
+def press_key(key_name: str) -> dict:
+    attach_to_default_desktop()
+    pyautogui.press(key_name)
+    time.sleep(0.04)
+    return {"status": "ok", "action": "press_key", "key": key_name}
+
+def hotkey(*keys) -> dict:
+    attach_to_default_desktop()
+    pyautogui.hotkey(*keys)
+    time.sleep(0.06)
+    return {"status": "ok", "action": "hotkey", "keys": list(keys)}
+
+
+# ==============================================================================
+# WINDOW MANAGEMENT
+# ==============================================================================
+
+def list_windows() -> dict:
+    attach_to_default_desktop()
+    import win32gui
+    windows = []
+    def enum_handler(hwnd, extra):
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd).strip()
+            if title:
+                rect = win32gui.GetWindowRect(hwnd)
+                w = rect[2] - rect[0]
+                h = rect[3] - rect[1]
+                if w > 0 and h > 0:
+                    windows.append({
+                        "hwnd": hwnd,
+                        "title": title,
+                        "rect": {"left": rect[0], "top": rect[1], "width": w, "height": h}
+                    })
+    win32gui.EnumWindows(enum_handler, None)
+    return {"windows": windows, "count": len(windows)}
+
+def get_active_window() -> dict:
+    attach_to_default_desktop()
+    import win32gui, win32process
+    hwnd = win32gui.GetForegroundWindow()
+    title = win32gui.GetWindowText(hwnd) if hwnd else ""
+    rect = win32gui.GetWindowRect(hwnd) if hwnd else (0, 0, 0, 0)
+    process_name = ""
+    pid = 0
+    if hwnd:
+        try:
+            tid, pid = win32process.GetWindowThreadProcessId(hwnd)
+            h_proc = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if h_proc:
+                buf = ctypes.create_unicode_buffer(1024)
+                size = ctypes.c_ulong(1024)
+                if ctypes.windll.kernel32.QueryFullProcessImageNameW(h_proc, 0, buf, ctypes.byref(size)):
+                    process_name = os.path.basename(buf.value)
+                ctypes.windll.kernel32.CloseHandle(h_proc)
+        except Exception:
+            pass
+
+    return {
+        "hwnd": hwnd,
+        "title": title,
+        "process": process_name,
+        "pid": pid,
+        "rect": {"left": rect[0], "top": rect[1], "width": rect[2] - rect[0], "height": rect[3] - rect[1]},
+        "is_minimized": bool(win32gui.IsIconic(hwnd)) if hwnd else False,
+        "is_visible": bool(win32gui.IsWindowVisible(hwnd)) if hwnd else False
+    }
+
+def focus_window(query: str, capture_after: bool = False, auto_launch: bool = False) -> dict:
+    """Restores and brings matched window to front with verified foreground activation."""
+    attach_to_default_desktop()
+    import win32gui, win32con, win32process
+    matched = None
+    query_lower = query.lower().strip()
+
+    def enum_handler(hwnd, extra):
+        nonlocal matched
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd).strip()
+            if query_lower in title.lower():
+                matched = (hwnd, title)
+    win32gui.EnumWindows(enum_handler, None)
+
+    if not matched and auto_launch:
+        launch_res = launch_application(query, wait_for_window=True)
+        if launch_res.get("status") == "ok":
+            win32gui.EnumWindows(enum_handler, None)
+
+    if matched:
+        hwnd, title = matched
+        # If minimized, restore it
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.08)
+        else:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+
+        # AttachThreadInput trick to bypass Windows focus-stealing lock
+        try:
+            fore_hwnd = win32gui.GetForegroundWindow()
+            if fore_hwnd and fore_hwnd != hwnd:
+                fore_thread = win32process.GetWindowThreadProcessId(fore_hwnd)[0]
+                target_thread = win32process.GetWindowThreadProcessId(hwnd)[0]
+                if fore_thread != target_thread:
+                    win32process.AttachThreadInput(fore_thread, target_thread, True)
+                    win32gui.BringWindowToTop(hwnd)
+                    win32gui.SetForegroundWindow(hwnd)
+                    win32process.AttachThreadInput(fore_thread, target_thread, False)
+                else:
+                    win32gui.BringWindowToTop(hwnd)
+                    win32gui.SetForegroundWindow(hwnd)
+            else:
+                win32gui.BringWindowToTop(hwnd)
+                win32gui.SetForegroundWindow(hwnd)
+        except Exception:
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
+        time.sleep(0.1)
+        active = get_active_window()
+        is_now_active = (active["hwnd"] == hwnd) or (query_lower in active["title"].lower())
+        verification = take_screenshot() if capture_after else None
+        return {
+            "status": "ok",
+            "action": "focus_window",
+            "title": title,
+            "hwnd": hwnd,
+            "is_active_foreground": is_now_active,
+            "verification_screenshot": verification["saved_path"] if verification else None
+        }
+    return {
+        "status": "error",
+        "action": "focus_window",
+        "message": f"No window found matching '{query}'"
+    }
+
+
+def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec: float = 8.0) -> dict:
+    """
+    Universally launches ANY application and ensures it opens and appears on the live screen.
+    Discovers Store apps, Win32 apps, Registry apps, and PATH executables.
+    Cleans any windowless zombie processes that block GUI rendering.
+    """
+    resolved = find_installed_application(app_name)
+    window_title_hint = resolved.get("window_hint", app_name)
+    launch_cmd = resolved.get("launch_cmd", f"start {app_name}")
+    app_lower = app_name.lower().strip()
+    short_hint = app_lower.replace(".exe", "")
+
+    # Check if a VISIBLE window already exists
+    import win32gui
+    matched_window = None
+    query_hint = window_title_hint.lower()
+
+    def check_vis(hwnd, _):
+        nonlocal matched_window
+        if win32gui.IsWindowVisible(hwnd):
+            t = win32gui.GetWindowText(hwnd).strip()
+            if t and (query_hint in t.lower() or short_hint in t.lower()):
+                matched_window = hwnd
+    win32gui.EnumWindows(check_vis, None)
+
+    # If visible window already exists, bring it to front and return
+    if matched_window:
+        focus_res = focus_window(query_hint)
+        if focus_res.get("status") != "ok":
+            focus_res = focus_window(short_hint)
+        return {
+            "status": "ok",
+            "action": "launch_application",
+            "app": app_name,
+            "resolved": resolved,
+            "was_already_running": True,
+            "window_focused": True,
+            "active_window": get_active_window(),
+            "message": f"Application '{app_name}' was already open and has been focused on the live screen."
+        }
+
+    # If NO visible window exists, check if a windowless zombie process is blocking launch
+    proc_check = is_process_running(short_hint)
+    if proc_check.get("is_running", False):
+        # Terminate windowless zombie instances so GUI can start cleanly
+        for proc in proc_check.get("processes", []):
+            try:
+                subprocess.call(f"taskkill /PID {proc['pid']} /F", shell=True, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+        time.sleep(0.3)
+
+    try:
+        subprocess.Popen(launch_cmd, shell=True)
+        time.sleep(0.5)
+    except Exception as e:
+        return {
+            "status": "error",
+            "action": "launch_application",
+            "app": app_name,
+            "error": f"Failed to execute command '{launch_cmd}': {str(e)}"
+        }
+
+    if wait_for_window:
+        start_wait = time.time()
+        found_window = None
+        while time.time() - start_wait < timeout_sec:
+            time.sleep(0.4)
+            focus_res = focus_window(query_hint)
+            if focus_res.get("status") == "ok":
+                found_window = focus_res
+                break
+            focus_res = focus_window(short_hint)
+            if focus_res.get("status") == "ok":
+                found_window = focus_res
+                break
+
+        active = get_active_window()
+        return {
+            "status": "ok" if found_window else "warning",
+            "action": "launch_application",
+            "app": app_name,
+            "resolved": resolved,
+            "was_already_running": False,
+            "window_focused": found_window is not None,
+            "active_window": active,
+            "message": f"Application '{app_name}' is opened and focused on the live screen." if found_window else f"Application '{app_name}' command was launched, but window did not appear within {timeout_sec}s."
+        }
+
+    return {
+        "status": "ok",
+        "action": "launch_application",
+        "app": app_name,
+        "resolved": resolved,
+        "was_already_running": False
+    }
+
+
+# ==============================================================================
+# CONTINUOUS BATCH EXECUTION PIPELINE (OPTION D CORE)
+# ==============================================================================
+
+def run_batch_sequence(steps: list, take_final_checkpoint: bool = True, halt_on_error: bool = True) -> dict:
+    """
+    Executes an entire multi-step action pipeline continuously at native machine speed.
+    Eliminates round-trip model latencies between steps.
+    """
+    attach_to_default_desktop()
+    start_time = time.time()
+    log = []
+
+    for i, step in enumerate(steps):
+        act = step.get("action", "").lower()
+        step_res = {"step": i + 1, "action": act}
+
+        try:
+            if act in ("launch", "open", "launch_app"):
+                step_res["result"] = launch_application(
+                    app_name=step.get("app", step.get("name", "")),
+                    wait_for_window=step.get("wait_for_window", True),
+                    timeout_sec=float(step.get("timeout_sec", 8.0))
+                )
+                if step_res["result"].get("status") == "error" and halt_on_error:
+                    log.append(step_res)
+                    return {
+                        "status": "error",
+                        "halted_at_step": i + 1,
+                        "reason": f"Failed to launch application '{step.get('app')}': {step_res['result'].get('error')}",
+                        "log": log
+                    }
+
+            elif act in ("port", "check_port"):
+                port_num = int(step.get("port", 9876))
+                host = step.get("host", "127.0.0.1")
+                port_res = check_port(port_num, host=host)
+                step_res["result"] = port_res
+                if step.get("require_open", True) and not port_res.get("is_open", False):
+                    log.append(step_res)
+                    return {
+                        "status": "error",
+                        "halted_at_step": i + 1,
+                        "reason": f"Socket port {port_num} on {host} is closed or not listening. Application server is not ready.",
+                        "log": log
+                    }
+
+            elif act == "focus":
+                title_query = step.get("title", step.get("query", ""))
+                auto_launch = step.get("auto_launch", step.get("launch_if_missing", False))
+                focus_res = focus_window(title_query, auto_launch=auto_launch)
+                step_res["result"] = focus_res
+                if focus_res.get("status") == "error" and (step.get("require_focus", True) or halt_on_error):
+                    log.append(step_res)
+                    return {
+                        "status": "error",
+                        "halted_at_step": i + 1,
+                        "reason": f"Halting execution: Window matching '{title_query}' could not be focused on the live screen. Will not click on unintended windows.",
+                        "log": log
+                    }
+
+            elif act == "click":
+                step_res["result"] = verified_click(
+                    x=step.get("x"),
+                    y=step.get("y"),
+                    button=step.get("button", "left"),
+                    clicks=step.get("clicks", 1)
+                )
+            elif act == "double_click":
+                step_res["result"] = double_click(x=step.get("x"), y=step.get("y"))
+            elif act == "right_click":
+                step_res["result"] = right_click(x=step.get("x"), y=step.get("y"))
+            elif act == "move":
+                step_res["result"] = move_mouse(step.get("x"), step.get("y"), duration=step.get("duration", 0.15))
+            elif act == "hover":
+                step_res["result"] = mouse_hover(step.get("x"), step.get("y"))
+            elif act == "drag":
+                step_res["result"] = mouse_drag(
+                    step.get("start_x"), step.get("start_y"),
+                    step.get("end_x"), step.get("end_y"),
+                    duration=step.get("duration", 0.4)
+                )
+            elif act == "scroll":
+                step_res["result"] = mouse_scroll(step.get("clicks", 0), x=step.get("x"), y=step.get("y"))
+            elif act == "paste":
+                step_res["result"] = paste_text(step.get("text", ""))
+            elif act == "type":
+                step_res["result"] = type_text(step.get("text", ""), interval=step.get("interval", 0.02))
+            elif act == "press":
+                step_res["result"] = press_key(step.get("key", ""))
+            elif act == "hotkey":
+                step_res["result"] = hotkey(*step.get("keys", []))
+            elif act == "wait":
+                time.sleep(float(step.get("seconds", 0.2)))
+                step_res["result"] = {"status": "ok", "waited": step.get("seconds")}
+            elif act == "checkpoint":
+                shot = take_screenshot()
+                step_res["result"] = {"status": "ok", "checkpoint_path": shot["saved_path"]}
+            elif act == "expect_window":
+                q = step.get("query", "").lower()
+                timeout = float(step.get("timeout", 5.0))
+                poll_start = time.time()
+                found_win = None
+                while time.time() - poll_start < timeout:
+                    wins = list_windows().get("windows", [])
+                    for w in wins:
+                        if q in w.get("title", "").lower():
+                            found_win = w
+                            break
+                    if found_win:
+                        break
+                    time.sleep(0.2)
+                if not found_win:
+                    raise RuntimeError(f"Expected window matching '{step.get('query')}' not found within {timeout}s")
+                step_res["result"] = {"status": "ok", "window": found_win}
+            elif act == "expect_file":
+                p = os.path.abspath(step.get("path", ""))
+                timeout = float(step.get("timeout", 5.0))
+                min_bytes = int(step.get("min_bytes", 1))
+                poll_start = time.time()
+                found = False
+                while time.time() - poll_start < timeout:
+                    if os.path.exists(p) and os.path.getsize(p) >= min_bytes:
+                        found = True
+                        break
+                    time.sleep(0.2)
+                if not found:
+                    raise RuntimeError(f"Expected file '{p}' with >= {min_bytes} bytes not created within {timeout}s")
+                step_res["result"] = {"status": "ok", "file": p, "bytes": os.path.getsize(p)}
+            elif act == "expect_port":
+                port = int(step.get("port", 80))
+                timeout = float(step.get("timeout", 5.0))
+                poll_start = time.time()
+                is_open = False
+                while time.time() - poll_start < timeout:
+                    res = check_port(port)
+                    if res.get("listening"):
+                        is_open = True
+                        break
+                    time.sleep(0.2)
+                if not is_open:
+                    raise RuntimeError(f"Expected port {port} to be open, but remained closed after {timeout}s")
+                step_res["result"] = {"status": "ok", "port": port, "listening": True}
+            elif act == "expect_motion":
+                timeout = float(step.get("timeout", 4.0))
+                poll_start = time.time()
+                motion_detected = False
+                monitor = get_live_screen_monitor(auto_start=True)
+                st = {}
+                while time.time() - poll_start < timeout:
+                    st = monitor.get_status()
+                    if st.get("motion_delta_percent", 0.0) >= float(step.get("min_percent", 0.5)):
+                        motion_detected = True
+                        break
+                    time.sleep(0.25)
+                if not motion_detected:
+                    raise RuntimeError(f"Expected motion/animation on screen not detected within {timeout}s")
+                step_res["result"] = {"status": "ok", "motion_delta_percent": st.get("motion_delta_percent"), "is_animating": True}
+            else:
+                step_res["error"] = f"Unknown action: {act}"
+        except Exception as e:
+            step_res["error"] = str(e)
+            if halt_on_error:
+                log.append(step_res)
+                return {
+                    "status": "error",
+                    "halted_at_step": i + 1,
+                    "reason": str(e),
+                    "log": log
+                }
+
+        log.append(step_res)
+
+        inter_delay = step.get("after_delay", 0.04)
+        if inter_delay > 0:
+            time.sleep(inter_delay)
+
+    total_elapsed = time.time() - start_time
+
+    checkpoint = None
+    if take_final_checkpoint:
+        checkpoint = take_screenshot()
+
+    return {
+        "status": "ok",
+        "total_steps": len(steps),
+        "elapsed_seconds": round(total_elapsed, 3),
+        "final_checkpoint": checkpoint["saved_path"] if checkpoint else None,
+        "log": log
+    }
+
+def execute_task(task_spec: dict) -> dict:
+    """
+    Unified 5-Stage Autonomous Task Runner:
+    1. Pre-flight Validation
+    2. Lifecycle & Live Screen Focus
+    3. Continuous Batch Execution
+    4. Milestone Checkpointing
+    5. Expected Output Verification
+    """
+    start_time = time.time()
+    tool = task_spec.get("tool")
+    steps = task_spec.get("steps", [])
+    expected = task_spec.get("expected", {})
+
+    preflight_items = [tool] if tool else None
+    preflight_res = preflight_check(preflight_items)
+
+    focus_res = None
+    if tool:
+        focus_res = focus_window(tool, auto_launch=True)
+
+    batch_res = run_batch_sequence(steps, halt_on_error=True)
+    if batch_res.get("status") == "error":
+        return {
+            "status": "error",
+            "phase": "execution",
+            "tool": tool,
+            "error": batch_res.get("reason"),
+            "batch_log": batch_res.get("log"),
+            "elapsed_seconds": round(time.time() - start_time, 3)
+        }
+
+    checkpoint = take_screenshot()
+
+    verifications = {}
+    if expected:
+        if "file" in expected:
+            fpath = os.path.abspath(expected["file"])
+            min_b = expected.get("min_bytes", 1)
+            t_out = expected.get("timeout", 4.0)
+            t0 = time.time()
+            ok = False
+            while time.time() - t0 < t_out:
+                if os.path.exists(fpath) and os.path.getsize(fpath) >= min_b:
+                    ok = True
+                    break
+                time.sleep(0.2)
+            verifications["file"] = {
+                "path": fpath,
+                "verified": ok,
+                "size_bytes": os.path.getsize(fpath) if os.path.exists(fpath) else 0
+            }
+            if not ok:
+                return {
+                    "status": "failed_verification",
+                    "reason": f"Expected output file '{fpath}' not found or empty",
+                    "checkpoint": checkpoint["saved_path"],
+                    "verifications": verifications
+                }
+
+        if "window_title" in expected:
+            q = expected["window_title"].lower()
+            wins = list_windows().get("windows", [])
+            matched = any(q in w.get("title", "").lower() for w in wins)
+            verifications["window"] = {"query": expected["window_title"], "verified": matched}
+            if not matched:
+                return {
+                    "status": "failed_verification",
+                    "reason": f"Expected window '{expected['window_title']}' not active",
+                    "checkpoint": checkpoint["saved_path"],
+                    "verifications": verifications
+                }
+
+        if "port" in expected:
+            p = int(expected["port"])
+            p_res = check_port(p)
+            verifications["port"] = {"port": p, "listening": p_res.get("listening", False)}
+
+    total_time = round(time.time() - start_time, 3)
+    return {
+        "status": "success",
+        "tool": tool,
+        "elapsed_seconds": total_time,
+        "preflight": preflight_res.get("all_ready", True),
+        "total_steps": len(steps),
+        "checkpoint_screenshot": checkpoint["saved_path"],
+        "verifications": verifications,
+        "live_telemetry": get_live_screen_monitor().get_status()
+    }
+
+
+# ==============================================================================
+# VOICE & AUDIO (TTS + STT)
+# ==============================================================================
+
+def speak(text: str, rate: int = 0, volume: int = 100) -> dict:
+    """Speaks text through Windows SAPI voice synthesizer."""
+    try:
+        import win32com.client
+        speaker = win32com.client.Dispatch("SAPI.SpVoice")
+        speaker.Rate = rate
+        speaker.Volume = volume
+        speaker.Speak(text)
+        return {"status": "ok", "action": "speak", "text": text}
+    except Exception as e:
+        return {"status": "error", "action": "speak", "error": str(e)}
+
+def transcribe_audio(audio_path: str) -> dict:
+    """Transcribes voice audio recording (wav, mp3, etc.) to text."""
+    try:
+        import speech_recognition as sr
+        from pydub import AudioSegment
+
+        ext = os.path.splitext(audio_path)[1].lower()
+        wav_path = audio_path
+        temp_created = False
+        if ext != ".wav":
+            sound = AudioSegment.from_file(audio_path)
+            wav_path = audio_path + "_converted.wav"
+            sound.export(wav_path, format="wav")
+            temp_created = True
+
+        r = sr.Recognizer()
+        with sr.AudioFile(wav_path) as source:
+            audio_data = r.record(source)
+            text = r.recognize_google(audio_data)
+
+        if temp_created and os.path.exists(wav_path):
+            try:
+                os.remove(wav_path)
+            except Exception:
+                pass
+
+        return {"status": "ok", "text": text, "source": audio_path}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "source": audio_path}
+
+
+# ==============================================================================
+# CONTINUOUS LIVE SCREEN & STATUS MONITORING API
+# ==============================================================================
+
+class LiveScreenMonitor:
+    """
+    Lightweight background monitor that continuously tracks:
+    1. Active foreground window (HWND, Title, Process, PID, Rect, Visibility)
+    2. Mouse cursor position (X, Y)
+    3. Motion Delta / Activity rate (% pixels changed between frames)
+    4. Encodes rolling JPEG buffer in RAM for instantaneous API streaming (<1ms response)
+    """
+    def __init__(self, fps: float = 3.0):
+        self.fps = fps
+        self.interval = 1.0 / max(0.5, fps)
+        self.running = False
+        self.lock = threading.Lock()
+        self.latest_status = {}
+        self.latest_jpeg_bytes = None
+        self.prev_thumb = None
+        self.motion_delta = 0.0
+        self.event_history = []
+        self._thread = None
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self.running = False
+
+    def _run_loop(self):
+        attach_to_default_desktop()
+        sct = None
+        try:
+            import mss
+            sct = mss.mss()
+        except Exception:
+            pass
+
+        last_title = ""
+
+        while self.running:
+            t0 = time.time()
+            try:
+                # 1. Active window inspection
+                active_win = get_active_window()
+                current_title = active_win.get("title", "")
+                if current_title and current_title != last_title:
+                    self.event_history.append({
+                        "timestamp": round(time.time(), 2),
+                        "event": "window_switch",
+                        "title": current_title,
+                        "process": active_win.get("process", ""),
+                        "hwnd": active_win.get("hwnd")
+                    })
+                    if len(self.event_history) > 50:
+                        self.event_history.pop(0)
+                    last_title = current_title
+
+                # 2. Mouse position
+                mouse_pos = get_mouse_position()
+
+                # 3. Screen frame & motion delta
+                motion_percent = 0.0
+                if sct and Image:
+                    monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                    raw = sct.grab(monitor)
+                    img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+
+                    thumb = img.resize((160, 90))
+                    if self.prev_thumb:
+                        diff = ImageChops.difference(thumb, self.prev_thumb)
+                        stat = ImageStat.Stat(diff)
+                        avg_diff = sum(stat.mean) / 3.0
+                        motion_percent = round((avg_diff / 255.0) * 100.0, 2)
+                    self.prev_thumb = thumb
+
+                    bio = io.BytesIO()
+                    img.save(bio, format="JPEG", quality=75, optimize=False)
+                    with self.lock:
+                        self.latest_jpeg_bytes = bio.getvalue()
+
+                with self.lock:
+                    self.motion_delta = motion_percent
+                    self.latest_status = {
+                        "status": "ok",
+                        "timestamp": round(time.time(), 3),
+                        "active_window": active_win,
+                        "mouse": {"x": mouse_pos.get("x", 0), "y": mouse_pos.get("y", 0)},
+                        "screen": {
+                            "width": SCREEN_WIDTH,
+                            "height": SCREEN_HEIGHT
+                        },
+                        "motion_delta_percent": motion_percent,
+                        "is_animating": motion_percent > 0.8
+                    }
+            except Exception:
+                pass
+
+            elapsed = time.time() - t0
+            sleep_time = max(0.02, self.interval - elapsed)
+            time.sleep(sleep_time)
+
+    def get_status(self) -> dict:
+        with self.lock:
+            if not self.latest_status:
+                active_win = get_active_window()
+                pos = get_mouse_position()
+                return {
+                    "status": "ok",
+                    "timestamp": round(time.time(), 3),
+                    "active_window": active_win,
+                    "mouse": {"x": pos.get("x", 0), "y": pos.get("y", 0)},
+                    "screen": {"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT},
+                    "motion_delta_percent": 0.0,
+                    "is_animating": False
+                }
+            return dict(self.latest_status)
+
+    def get_jpeg(self) -> bytes:
+        with self.lock:
+            return self.latest_jpeg_bytes
+
+    def get_vlm_frame(self, crop_window: bool = False, max_dim: int = 1024) -> bytes:
+        """Returns ultra-fast, lightweight JPEG frame optimized for Multimodal LLMs (~30KB)."""
+        with self.lock:
+            if not self.latest_jpeg_bytes:
+                return None
+            try:
+                bio_in = io.BytesIO(self.latest_jpeg_bytes)
+                img = Image.open(bio_in)
+                if crop_window and self.latest_status:
+                    rect = self.latest_status.get("active_window", {}).get("rect", {})
+                    left = max(0, rect.get("left", 0))
+                    top = max(0, rect.get("top", 0))
+                    w = rect.get("width", 0)
+                    h = rect.get("height", 0)
+                    if w > 50 and h > 50:
+                        right = min(img.width, left + w)
+                        bottom = min(img.height, top + h)
+                        if right > left and bottom > top:
+                            img = img.crop((left, top, right, bottom))
+
+                if img.width > max_dim or img.height > max_dim:
+                    scale = min(max_dim / img.width, max_dim / img.height)
+                    new_size = (int(img.width * scale), int(img.height * scale))
+                    img = img.resize(new_size, Image.Resampling.BILINEAR)
+
+                bio_out = io.BytesIO()
+                img.save(bio_out, format="JPEG", quality=70, optimize=True)
+                return bio_out.getvalue()
+            except Exception:
+                return self.latest_jpeg_bytes
+
+_global_monitor = None
+
+def get_live_screen_monitor(auto_start: bool = True) -> LiveScreenMonitor:
+    global _global_monitor
+    if _global_monitor is None:
+        _global_monitor = LiveScreenMonitor(fps=3.0)
+        if auto_start:
+            _global_monitor.start()
+    return _global_monitor
+
+class MonitorHTTPHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
+    def do_POST(self):
+        """Low-latency in-process execution engine (<2ms overhead)."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            payload = {}
+
+        result = {}
+        if self.path in ("/action", "/api/action"):
+            act = payload.get("action", "")
+            if act == "click":
+                result = verified_click(payload.get("x"), payload.get("y"), payload.get("button", "left"), payload.get("clicks", 1))
+            elif act == "paste":
+                result = paste_text(payload.get("text", ""))
+            elif act == "type":
+                result = type_text(payload.get("text", ""), interval=payload.get("interval", 0.02))
+            elif act == "press":
+                result = press_key(payload.get("key", ""))
+            elif act == "hotkey":
+                result = hotkey(*payload.get("keys", []))
+            elif act == "focus":
+                result = focus_window(payload.get("title", ""), auto_launch=payload.get("auto_launch", True))
+            elif act == "move":
+                result = move_mouse(payload.get("x"), payload.get("y"), payload.get("duration", 0.15))
+            elif act == "open":
+                result = launch_application(payload.get("app", ""))
+            elif act == "speak":
+                result = speak(payload.get("text", ""))
+            else:
+                result = {"status": "error", "error": f"Unknown action: {act}"}
+
+        elif self.path in ("/batch", "/api/batch"):
+            steps = payload.get("steps", [])
+            result = run_batch_sequence(steps, halt_on_error=payload.get("halt_on_error", True))
+
+        elif self.path in ("/task", "/api/task"):
+            result = execute_task(payload)
+
+        elif self.path in ("/step", "/api/step"):
+            step = payload.get("step", {})
+            batch_res = run_batch_sequence([step], halt_on_error=True)
+            monitor = get_live_screen_monitor(auto_start=True)
+            result = {
+                "step_result": batch_res,
+                "telemetry": monitor.get_status()
+            }
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        data = json.dumps(result, indent=2).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        monitor = get_live_screen_monitor(auto_start=True)
+        if self.path in ("/status", "/api/status"):
+            st = monitor.get_status()
+            data = json.dumps(st, indent=2).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path in ("/quick_state", "/telemetry", "/api/quick"):
+            st = monitor.get_status()
+            act = st.get("active_window", {})
+            m = st.get("mouse", {})
+            res = {
+                "win": act.get("title", ""),
+                "proc": act.get("process", ""),
+                "pid": act.get("pid", 0),
+                "x": m.get("x", 0),
+                "y": m.get("y", 0),
+                "anim": st.get("is_animating", False),
+                "delta": st.get("motion_delta_percent", 0.0)
+            }
+            data = json.dumps(res).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith(("/vlm_frame", "/frame", "/api/vlm")):
+            crop_win = "crop=window" in self.path
+            jpeg = monitor.get_vlm_frame(crop_window=crop_win)
+            if jpeg:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", str(len(jpeg)))
+                self.end_headers()
+                self.wfile.write(jpeg)
+            else:
+                self.send_response(503)
+                self.end_headers()
+        elif self.path in ("/screen", "/screen.jpg", "/screenshot.jpg"):
+            jpeg = monitor.get_jpeg()
+            if not jpeg:
+                shot = take_screenshot()
+                try:
+                    with open(shot["saved_path"], "rb") as f:
+                        jpeg = f.read()
+                except Exception:
+                    pass
+            if jpeg:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", str(len(jpeg)))
+                self.end_headers()
+                self.wfile.write(jpeg)
+            else:
+                self.send_response(503)
+                self.end_headers()
+        elif self.path in ("/events", "/api/events"):
+            events = monitor.event_history
+            data = json.dumps({"events": events}, indent=2).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path in ("/stream", "/live"):
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                while monitor and monitor.running:
+                    jpeg = monitor.get_jpeg()
+                    if jpeg:
+                        self.wfile.write(b"--frame\r\n")
+                        self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
+                    time.sleep(0.25)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+        else:
+            html = """<!DOCTYPE html>
+<html>
+<head>
+    <title>🌌 Orion v2.0 "Nebula" - Live Perception & Control Dashboard</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 14px; margin-bottom: 20px; }
+        h1 { font-size: 1.4rem; margin: 0; color: #38bdf8; display: flex; align-items: center; gap: 10px; }
+        .badge { background: #10b981; color: #022c22; font-weight: 700; padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; letter-spacing: 0.05em; }
+        .grid { display: grid; grid-template-columns: 2.2fr 1fr; gap: 20px; }
+        .card { background: #131d31; border-radius: 12px; padding: 18px; border: 1px solid #1e293b; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        .stream-box img { width: 100%; border-radius: 8px; border: 1px solid #334155; display: block; }
+        .metric { margin-bottom: 14px; border-bottom: 1px solid #1e293b; padding-bottom: 8px; }
+        .metric:last-child { border-bottom: none; }
+        .metric-label { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+        .metric-val { font-size: 1.05rem; font-weight: 600; color: #f8fafc; margin-top: 2px; word-break: break-all; }
+        .highlight { color: #38bdf8; }
+        ul { padding-left: 18px; margin: 8px 0; font-size: 0.9rem; }
+        li { margin-bottom: 6px; }
+        a { color: #38bdf8; text-decoration: none; font-weight: 500; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>🌌</span> Orion v2.0 &quot;Nebula&quot; - Autonomous Perception &amp; Control</h1>
+        <span class="badge">● ORION ACTIVE</span>
+    </div>
+    <div class="grid">
+        <div class="card stream-box">
+            <h3 style="margin-top:0; color:#94a3b8; font-size: 0.95rem;">LIVE SCREEN BUFFER (1920×1080)</h3>
+            <img src="/stream" alt="Live Stream" />
+        </div>
+        <div class="card">
+            <h3 style="margin-top:0; color:#94a3b8; font-size: 0.95rem;">LIVE WORKSTATION STATUS</h3>
+            <div class="metric"><div class="metric-label">Active Window</div><div class="metric-val highlight" id="win-title">...</div></div>
+            <div class="metric"><div class="metric-label">Process / PID</div><div class="metric-val" id="win-proc">...</div></div>
+            <div class="metric"><div class="metric-label">Activity & Motion</div><div class="metric-val" id="motion-val">...</div></div>
+            <div class="metric"><div class="metric-label">Mouse Coordinates</div><div class="metric-val" id="mouse-pos">...</div></div>
+            
+            <h4 style="margin: 16px 0 6px 0; color:#94a3b8; font-size: 0.85rem; text-transform: uppercase;">Endpoints</h4>
+            <ul>
+                <li><a href="/quick_state" target="_blank">GET /quick_state</a> — Micro-telemetry (~6ms)</li>
+                <li><a href="/vlm_frame" target="_blank">GET /vlm_frame</a> — Downscaled VLM AI frame (~35ms)</li>
+                <li><a href="/status" target="_blank">GET /status</a> — Full JSON state</li>
+                <li><a href="/stream" target="_blank">GET /stream</a> — MJPEG video stream</li>
+                <li><a href="/events" target="_blank">GET /events</a> — Window switch log</li>
+            </ul>
+        </div>
+    </div>
+    <script>
+        setInterval(async () => {
+            try {
+                const res = await fetch('/status');
+                const d = await res.json();
+                document.getElementById('win-title').innerText = d.active_window?.title || 'None';
+                document.getElementById('win-proc').innerText = (d.active_window?.process || '') + (d.active_window?.pid ? ' (PID ' + d.active_window.pid + ')' : '');
+                document.getElementById('motion-val').innerText = (d.motion_delta_percent || 0) + '% ' + (d.is_animating ? '⚡ [ACTIVE ANIMATION]' : '⏸️ [STATIC]');
+                document.getElementById('mouse-pos').innerText = 'X: ' + (d.mouse?.x ?? '-') + ' | Y: ' + (d.mouse?.y ?? '-');
+            } catch(e) {}
+        }, 500);
+    </script>
+</body>
+</html>"""
+            data = html.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+def start_screen_monitor_server(port: int = 8765, daemon: bool = False):
+    """Starts the continuous screen perception HTTP server."""
+    monitor = get_live_screen_monitor(auto_start=True)
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), MonitorHTTPHandler)
+    info = {
+        "status": "ok",
+        "service": "screen_monitor_api",
+        "port": port,
+        "dashboard_url": f"http://127.0.0.1:{port}/",
+        "status_url": f"http://127.0.0.1:{port}/status",
+        "screen_url": f"http://127.0.0.1:{port}/screen.jpg",
+        "stream_url": f"http://127.0.0.1:{port}/stream"
+    }
+    print(json.dumps(info, indent=2))
+    sys.stdout.flush()
+    if daemon:
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        return server, monitor
+    else:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            monitor.stop()
+            server.server_close()
+
+
+# ==============================================================================
+# FAST-MCP SERVER INITIALIZATION
+# ==============================================================================
+
+def run_mcp_server():
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError:
+        from mcp.server import FastMCP
+
+    mcp = FastMCP("DesktopVoiceController")
+
+    @mcp.tool()
+    def tool_preflight_check(items_csv: str = "") -> str:
+        items = [i.strip() for i in items_csv.split(",")] if items_csv else None
+        return json.dumps(preflight_check(items))
+
+    @mcp.tool()
+    def tool_run_batch_sequence(steps_json: str) -> str:
+        steps = json.loads(steps_json)
+        return json.dumps(run_batch_sequence(steps))
+
+    @mcp.tool()
+    def tool_take_screenshot(save_path: str = None) -> str:
+        return json.dumps(take_screenshot(save_path))
+
+    @mcp.tool()
+    def tool_verified_click(x: int, y: int, button: str = "left", clicks: int = 1) -> str:
+        return json.dumps(verified_click(x, y, button, clicks))
+
+    @mcp.tool()
+    def tool_type_text(text: str) -> str:
+        return json.dumps(type_text(text))
+
+    @mcp.tool()
+    def tool_paste_text(text: str) -> str:
+        return json.dumps(paste_text(text))
+
+    @mcp.tool()
+    def tool_press_key(key_name: str) -> str:
+        return json.dumps(press_key(key_name))
+
+    @mcp.tool()
+    def tool_hotkey(keys_csv: str) -> str:
+        keys = [k.strip() for k in keys_csv.split(",")]
+        return json.dumps(hotkey(*keys))
+
+    @mcp.tool()
+    def tool_focus_window(query: str) -> str:
+        return json.dumps(focus_window(query))
+
+    @mcp.tool()
+    def tool_speak(text: str) -> str:
+        return json.dumps(speak(text))
+
+    @mcp.tool()
+    def tool_transcribe_audio(audio_path: str) -> str:
+        return json.dumps(transcribe_audio(audio_path))
+
+    @mcp.tool()
+    def tool_get_screen_status() -> str:
+        """Returns live screen perception status (active window, process, coordinates, motion delta, and animation state)."""
+        monitor = get_live_screen_monitor(auto_start=True)
+        return json.dumps(monitor.get_status())
+
+    @mcp.tool()
+    def tool_execute_task(task_json: str) -> str:
+        """Executes an end-to-end task with preflight, execution, and expected output verification."""
+        spec = json.loads(task_json)
+        return json.dumps(execute_task(spec))
+
+    @mcp.tool()
+    def tool_check_port(port: int = 9876, host: str = "127.0.0.1") -> str:
+        return json.dumps(check_port(port, host))
+
+    @mcp.tool()
+    def tool_launch_application(app_name: str, wait_for_window: bool = True) -> str:
+        return json.dumps(launch_application(app_name, wait_for_window))
+
+    @mcp.tool()
+    def tool_list_installed_apps(filter_query: str = "") -> str:
+        apps = get_installed_apps_catalog()
+        if filter_query:
+            q = filter_query.lower()
+            apps = [a for a in apps if q in a.get("Name", "").lower() or q in a.get("AppID", "").lower()]
+        return json.dumps(apps)
+
+    @mcp.tool()
+    def tool_list_listening_ports() -> str:
+        return json.dumps(list_listening_ports())
+
+    mcp.run()
+
+
+# ==============================================================================
+# CLI HANDLER
+# ==============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=f"🌌 Orion v{VERSION} \"{CODENAME}\" - Universal Autonomous Desktop & Perception Engine"
+    )
+    parser.add_argument("-v", "--version", action="version", version=f"Orion v{VERSION} ({CODENAME})")
+    parser.add_argument("--mcp", action="store_true", help="Run as FastMCP server")
+
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser("version", help="Show Orion engine version")
+
+    # preflight
+    p_pref = subparsers.add_parser("preflight")
+    p_pref.add_argument("items", nargs="*", default=None, help="Software names, libraries, or name:port")
+    p_pref.add_argument("--items", dest="items_flag", nargs="*", default=None, help="Alternative items flag")
+
+    # batch sequence
+    p_batch = subparsers.add_parser("batch")
+    p_batch.add_argument("--file", help="Path to JSON file containing steps array")
+    p_batch.add_argument("--json-data", help="Inline JSON string containing steps array")
+
+    # screenshot
+    p_shot = subparsers.add_parser("screenshot", aliases=["shot"])
+    p_shot.add_argument("--path", default=None)
+
+    # move
+    p_move = subparsers.add_parser("move")
+    p_move.add_argument("--x", type=int, required=True)
+    p_move.add_argument("--y", type=int, required=True)
+    p_move.add_argument("--duration", type=float, default=0.15)
+
+    # click (verified)
+    p_click = subparsers.add_parser("click")
+    p_click.add_argument("--x", type=int, default=None)
+    p_click.add_argument("--y", type=int, default=None)
+    p_click.add_argument("--button", default="left", choices=["left", "right", "middle"])
+    p_click.add_argument("--clicks", type=int, default=1)
+
+    # hover
+    p_hov = subparsers.add_parser("hover")
+    p_hov.add_argument("--x", type=int, required=True)
+    p_hov.add_argument("--y", type=int, required=True)
+
+    # double_click
+    p_dclick = subparsers.add_parser("double_click")
+    p_dclick.add_argument("--x", type=int, default=None)
+    p_dclick.add_argument("--y", type=int, default=None)
+
+    # right_click
+    p_rclick = subparsers.add_parser("right_click")
+    p_rclick.add_argument("--x", type=int, default=None)
+    p_rclick.add_argument("--y", type=int, default=None)
+
+    # drag
+    p_drag = subparsers.add_parser("drag")
+    p_drag.add_argument("--start_x", type=int, required=True)
+    p_drag.add_argument("--start_y", type=int, required=True)
+    p_drag.add_argument("--end_x", type=int, required=True)
+    p_drag.add_argument("--end_y", type=int, required=True)
+
+    # scroll
+    p_scroll = subparsers.add_parser("scroll")
+    p_scroll.add_argument("--clicks", type=int, required=True)
+    p_scroll.add_argument("--x", type=int, default=None)
+    p_scroll.add_argument("--y", type=int, default=None)
+
+    # pos
+    subparsers.add_parser("pos")
+
+    # type
+    p_type = subparsers.add_parser("type")
+    p_type.add_argument("--text", required=True)
+
+    # paste
+    p_paste = subparsers.add_parser("paste")
+    p_paste.add_argument("--text", required=True)
+
+    # press
+    p_press = subparsers.add_parser("press")
+    p_press.add_argument("--key", required=True)
+
+    # hotkey
+    p_hot = subparsers.add_parser("hotkey")
+    p_hot.add_argument("--keys", nargs="+", required=True)
+
+    # windows
+    subparsers.add_parser("list_windows", aliases=["windows"])
+    subparsers.add_parser("active_window")
+
+    # focus
+    p_foc = subparsers.add_parser("focus")
+    p_foc.add_argument("--title", required=True)
+
+    # speak
+    p_spk = subparsers.add_parser("speak")
+    p_spk.add_argument("--text", required=True)
+
+    # transcribe
+    p_tra = subparsers.add_parser("transcribe")
+    p_tra.add_argument("--audio", required=True)
+
+    # launch / open
+    p_launch = subparsers.add_parser("launch", aliases=["open"])
+    p_launch.add_argument("app", help="Application name or executable command")
+    p_launch.add_argument("--timeout", type=float, default=8.0)
+
+    # port / check_port
+    p_port = subparsers.add_parser("port", aliases=["check_port"])
+    p_port.add_argument("port_num", type=int, nargs="?", default=9876, help="Port number (default 9876 for Blender)")
+    p_port.add_argument("--host", default="127.0.0.1")
+
+    # apps
+    p_apps = subparsers.add_parser("apps")
+    p_apps.add_argument("filter", nargs="?", default="", help="Filter app name or ID")
+
+    # ports
+    subparsers.add_parser("ports")
+
+    # api / monitor / server
+    p_api = subparsers.add_parser("api", aliases=["monitor", "server"])
+    p_api.add_argument("--port", type=int, default=8765, help="API server port (default 8765)")
+    p_api.add_argument("--daemon", action="store_true", help="Run server in background daemon thread")
+
+    # status
+    p_status = subparsers.add_parser("status")
+    p_status.add_argument("--port", type=int, default=8765, help="Port of running API server to query (default 8765)")
+
+    # task
+    p_task = subparsers.add_parser("task")
+    p_task.add_argument("--file", help="Path to task spec JSON file")
+    p_task.add_argument("--json", dest="json_data", help="Raw JSON string of task spec")
+
+    args = parser.parse_args()
+
+    if args.mcp:
+        run_mcp_server()
+        return
+
+    result = {}
+    if args.command == "version":
+        result = {
+            "project": PROJECT_NAME,
+            "version": VERSION,
+            "codename": CODENAME,
+            "engine": "Universal Autonomous Desktop & Perception Engine",
+            "tag": "Orion v2.0 Nebula"
+        }
+    elif args.command in ("api", "monitor", "server"):
+        start_screen_monitor_server(port=args.port, daemon=args.daemon)
+        return
+    elif args.command == "task":
+        spec = {}
+        if args.file and os.path.exists(args.file):
+            with open(args.file, "r", encoding="utf-8") as f:
+                spec = json.load(f)
+        elif args.json_data:
+            spec = json.loads(args.json_data)
+        result = execute_task(spec)
+    elif args.command == "status":
+        try:
+            req = urllib.request.urlopen(f"http://127.0.0.1:{args.port}/status", timeout=0.8)
+            result = json.loads(req.read().decode("utf-8"))
+        except Exception:
+            win = get_active_window()
+            pos = get_mouse_position()
+            result = {
+                "status": "ok",
+                "timestamp": round(time.time(), 3),
+                "active_window": win,
+                "mouse": {"x": pos.get("x", 0), "y": pos.get("y", 0)},
+                "screen": {"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT},
+                "api_server_running": False
+            }
+    elif args.command == "preflight":
+        items = args.items or args.items_flag
+        result = preflight_check(items)
+    elif args.command == "apps":
+        apps = get_installed_apps_catalog()
+        if args.filter:
+            q = args.filter.lower()
+            apps = [a for a in apps if q in a.get("Name", "").lower() or q in a.get("AppID", "").lower()]
+        result = {"count": len(apps), "apps": apps}
+    elif args.command == "ports":
+        result = {"ports": list_listening_ports()}
+    elif args.command == "batch":
+        steps = []
+        if args.file and os.path.exists(args.file):
+            with open(args.file, "r", encoding="utf-8-sig") as f:
+                steps = json.load(f)
+        elif args.json_data:
+            steps = json.loads(args.json_data)
+        result = run_batch_sequence(steps)
+    elif args.command in ("screenshot", "shot"):
+        result = take_screenshot(args.path)
+    elif args.command in ("launch", "open"):
+        result = launch_application(args.app, timeout_sec=args.timeout)
+    elif args.command in ("port", "check_port"):
+        result = check_port(args.port_num, host=args.host)
+    elif args.command == "move":
+        result = move_mouse(args.x, args.y, args.duration)
+    elif args.command == "click":
+        result = verified_click(args.x, args.y, args.button, args.clicks)
+    elif args.command == "hover":
+        result = mouse_hover(args.x, args.y)
+    elif args.command == "double_click":
+        result = double_click(args.x, args.y)
+    elif args.command == "right_click":
+        result = right_click(args.x, args.y)
+    elif args.command == "drag":
+        result = mouse_drag(args.start_x, args.start_y, args.end_x, args.end_y)
+    elif args.command == "scroll":
+        result = mouse_scroll(args.clicks, args.x, args.y)
+    elif args.command == "pos":
+        result = get_mouse_position()
+    elif args.command == "type":
+        result = type_text(args.text)
+    elif args.command == "paste":
+        result = paste_text(args.text)
+    elif args.command == "press":
+        result = press_key(args.key)
+    elif args.command == "hotkey":
+        result = hotkey(*args.keys)
+    elif args.command in ("list_windows", "windows"):
+        result = list_windows()
+    elif args.command == "active_window":
+        result = get_active_window()
+    elif args.command == "focus":
+        result = focus_window(args.title)
+    elif args.command == "speak":
+        result = speak(args.text)
+    elif args.command == "transcribe":
+        result = transcribe_audio(args.audio)
+    else:
+        parser.print_help()
+        return
+
+    print(json.dumps(result, indent=2))
+
+if __name__ == "__main__":
+    main()

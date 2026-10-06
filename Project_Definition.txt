@@ -1,0 +1,51 @@
+==============================================================================
+                    PROJECT DEFINITION & ARCHITECTURE SPECIFICATION
+==============================================================================
+
+PROJECT NAME:
+    Antigravity Universal Autonomous Desktop, Service & Voice Control System
+
+OVERVIEW:
+    An end-to-end agentic desktop automation and development system configured
+    for Google Antigravity. Delivers complete hands-free operation across ALL
+    installed Windows applications, local web/data services, and network ports.
+    Users provide voice commands or text instructions, and the AI agent autonomously
+    discovers tools, validates live screen rendering, checks listening socket ports,
+    executes high-speed compiled batches, and deterministically validates expected outputs.
+
+SYSTEM SCOPE: UNIVERSAL MULTI-TOOL SUPPORT
+    The system is completely application-agnostic and supports ALL 209+ software
+    tools, development environments, and network services installed on the workstation:
+    - Web Browsers: Google Chrome, Microsoft Edge
+    - Productivity: Excel, Word, PowerPoint, OneNote, Outlook, Access, Notion, To Do
+    - Media & Creative: Paint, Paint 3D, VLC Media Player, OBS Studio, CapCut, Clipchamp
+    - Engineering & CAD: KiCad (PCB/Schematic), MATLAB R2026a, NI LabVIEW, Arduino IDE
+    - Developers & IDEs: Antigravity IDE, Visual Studio Code, Terminal, PowerShell, Git
+    - Data Science & AI: Jupyter (8888), Streamlit (8501), Ollama (11434), LM Studio (1234)
+    - 3D & Modeling: Blender (9876), 3D Viewer, ComfyUI (8188)
+
+THE 5-STAGE CLOSED-LOOP EXECUTION PROTOCOL:
+    1. Pre-Flight Validation: Upfront check of software binaries, processes, libraries, ports
+    2. Lifecycle & Live Screen Focus: Cleans windowless zombies, restores visible HWND
+    3. Machine-Speed Execution: Direct Engine IPC or Continuous Compiled Batch
+    4. Milestone Checkpointing: Ephemeral frame streaming to .cache/screen_live.png
+    5. Expected Output Verification: Validates output files, window states, socket responses, and motion
+
+LIVE SCREEN PERCEPTION API (PORT 8765):
+    - Web Dashboard: http://localhost:8765/ (Live MJPEG video stream + real-time telemetry)
+    - JSON Status: http://localhost:8765/status (Active window, PID, coords, motion delta)
+    - Snapshot Buffer: http://localhost:8765/screen.jpg (Instant RAM frame)
+    - Event Stream: http://localhost:8765/events (Window focus history)
+
+CLI ENTRYPOINTS & MCP SERVER:
+    - Wrappers: desk / deskctl in C:\Users\DELL\AppData\Local\Programs\Python\Python310\Scripts\
+    - FastMCP Server: registered as "desktop-controller" in mcp_config.json
+    - Skill Definitions: workspace (.gemini/skills/voice-desktop-automation) and global config
+
+CURRENT STATUS:
+    - Universal application catalog (209 apps) and lifecycle manager operational.
+    - Continuous Screen Perception API running live on port 8765.
+    - 5-stage task runner with output verification deployed (deskctl task).
+    - Production ready across all software tools on the workstation.
+
+==============================================================================
