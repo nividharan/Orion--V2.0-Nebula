@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/orion_banner.jpg" alt="Orion v2.0 Nebula Banner" width="100%" />
+</p>
+
 # 🌌 Orion v2.0 "Nebula"
 ### Fast Desktop Automation & Screen Perception System
 
