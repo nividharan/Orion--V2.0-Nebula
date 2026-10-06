@@ -987,9 +987,6 @@ def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec:
 # ==============================================================================
 
 PORTAL_MAP = {
-    "swayam nptel": "https://swayam.gov.in/nc_details/NPTEL",
-    "nptel": "https://nptel.ac.in/",
-    "swayam": "https://swayam.gov.in/",
     "github": "https://github.com/",
     "youtube": "https://www.youtube.com/",
     "gmail": "https://mail.google.com/",
