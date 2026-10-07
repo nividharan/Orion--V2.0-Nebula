@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Video Playback Test Fixture</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background: #0f0f0f; color: #fff; }
+        #player-container { position: relative; width: 640px; height: 360px; background: #000; }
+        video { width: 100%; height: 100%; }
+        .ad-showing { border: 2px solid #ffcc00; }
+        .ytp-ad-module { position: absolute; bottom: 20px; right: 20px; z-index: 100; }
+        .ytp-ad-skip-button {
+            background: rgba(0,0,0,0.8); color: #fff; border: 1px solid #fff;
+            padding: 8px 16px; cursor: pointer; display: block; font-weight: bold;
+        }
+        .hidden { display: none !important; }
+        #cookie-banner {
+            position: fixed; top: 20px; left: 20px; width: 300px;
+            background: #222; border: 1px solid #444; padding: 16px; z-index: 999;
+        }
+        #sensitive-section { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Playback Testbed</h1>
+
+    <div id="cookie-banner" class="cookie-modal hidden" role="dialog" aria-modal="true">
+        <p>Before you continue to YouTube...</p>
+        <button id="reject-btn" role="button">Reject all</button>
+        <button id="accept-btn" role="button">Accept all</button>
+    </div>
+
+    <div id="player-container">
+        <!-- We use an in-memory canvas stream or mock properties on this video element -->
+        <video id="test-video" width="640" height="360" controls></video>
+
+        <div id="ad-container" class="hidden">
+            <div class="video-ads ytp-ad-module">
+                <button id="skip-btn" class="ytp-ad-skip-button">Skip Ad</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="sensitive-section">
+        <label>Password: <input type="password" id="secret-pass" value="super_secret_123" /></label>
+        <label>Credit Card: <input autocomplete="cc-number" id="secret-card" value="4111222233334444" /></label>
+    </div>
+
+    <script>
+        const video = document.getElementById('test-video');
+        const adContainer = document.getElementById('ad-container');
+        const skipBtn = document.getElementById('skip-btn');
+        const cookieBanner = document.getElementById('cookie-banner');
+
+        // Create a dummy video stream so video element has real readyState without external video assets
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 360;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#1e88e5';
+        ctx.fillRect(0, 0, 640, 360);
+
+        try {
+            const stream = canvas.captureStream(25);
+            video.srcObject = stream;
+        } catch (e) {
+            console.warn('captureStream not available, mocking properties directly');
+        }
+
+        // Test harness helper functions accessible by tests
+        window.setMockState = function(stateName) {
+            if (stateName === 'active_playing') {
+                cookieBanner.classList.add('hidden');
+                adContainer.classList.add('hidden');
+                document.getElementById('player-container').classList.remove('ad-showing');
+                video.muted = false;
+                video.play();
+            } else if (stateName === 'paused') {
+                cookieBanner.classList.add('hidden');
+                adContainer.classList.add('hidden');
+                document.getElementById('player-container').classList.remove('ad-showing');
+                video.pause();
+            } else if (stateName === 'ad_skippable') {
+                cookieBanner.classList.add('hidden');
+                adContainer.classList.remove('hidden');
+                skipBtn.classList.remove('hidden');
+                document.getElementById('player-container').classList.add('ad-showing');
+                video.pause();
+            } else if (stateName === 'ad_unskippable') {
+                cookieBanner.classList.add('hidden');
+                adContainer.classList.remove('hidden');
+                skipBtn.classList.add('hidden');
+                document.getElementById('player-container').classList.add('ad-showing');
+                video.pause();
+            } else if (stateName === 'consent_blocked') {
+                cookieBanner.classList.remove('hidden');
+                adContainer.classList.add('hidden');
+                document.getElementById('player-container').classList.remove('ad-showing');
+                video.pause();
+            }
+        };
+
+        // When skip button is clicked, dismiss ad and resume playback
+        skipBtn.addEventListener('click', () => {
+            adContainer.classList.add('hidden');
+            document.getElementById('player-container').classList.remove('ad-showing');
+            video.play();
+        });
+
+        // When cookie banner is dismissed
+        document.getElementById('reject-btn').addEventListener('click', () => {
+            cookieBanner.classList.add('hidden');
+            video.play();
+        });
+        document.getElementById('accept-btn').addEventListener('click', () => {
+            cookieBanner.classList.add('hidden');
+            video.play();
+        });
+    </script>
+</body>
+</html>
