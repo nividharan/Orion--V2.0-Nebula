@@ -3171,22 +3171,25 @@ class OrionSystem:
         """Navigates to URL using Playwright engine with CDP capture and auto-waiting."""
         from web_engine.browser_manager import BrowserManager
         from web_engine.config import BrowserConfig
-        mgr = BrowserManager(BrowserConfig(headless=headless))
+        mgr = BrowserManager.get_active() or BrowserManager(BrowserConfig(headless=headless))
         return mgr.navigate(url)
 
     @staticmethod
     def web_search(portal: str, query: str, limit: int = 5, headless: bool = False) -> dict:
         """Performs deep DOM-level search and extraction across web portals."""
+        import urllib.parse
         from web_engine.browser_manager import BrowserManager
         from web_engine.config import BrowserConfig
         from web_engine.pages.portal_search_page import PortalSearchPage
-        mgr = BrowserManager(BrowserConfig(headless=headless))
+        mgr = BrowserManager.get_active() or BrowserManager(BrowserConfig(headless=headless))
         page = PortalSearchPage(mgr)
         p = portal.lower()
         if "play" in p:
             return page.search_google_play(query, limit=limit)
         elif "youtube" in p:
             return page.search_youtube(query, limit=limit)
+        return page.search_generic(f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}", query)
+
     @staticmethod
     def web_action(action: str, params: dict = None) -> dict:
         """Executes authorized web action with security allow-list enforcement."""

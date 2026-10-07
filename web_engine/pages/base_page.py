@@ -357,6 +357,17 @@ class BasePage:
             except Exception:
                 continue
 
+    def wait_for_network_idle(self, timeout_ms: int = 3000):
+        """
+        Safely waits for networkidle with a non-fatal timeout cap to prevent infinite hangs.
+        Used by portal search pages to let dynamic result listings settle.
+        """
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except Exception:
+            pass
+
+
 
     def scroll_until_no_new_content(
         self,

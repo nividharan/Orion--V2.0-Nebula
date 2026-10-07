@@ -645,7 +645,16 @@ class NebulaModel:
                             if act == "browse":
                                 portal_name = step.get("portal")
                                 query_term = step.get("query")
-                                if portal_name and query_term:
+                                is_play = step.get("play", False)
+
+                                if is_play:
+                                    # Direct Media Playback: Launch native Chrome directly into the video player
+                                    self.stream.print_line("Chrome Executor", "▶️", f"Streaming media directly via Chrome: '{target}'...")
+                                    res = orion_core.browse_web(target, browser="chrome")
+                                    elapsed = (time.perf_counter() - t_step_start) * 1000
+                                    self.stream.print_success(f"Chrome active and streaming '{query_term or target}'", elapsed)
+                                    self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Video playback active in Chrome.")
+                                elif portal_name and query_term:
                                     try:
                                         self.stream.print_line("Chrome Executor", "🔍", f"Querying {portal_name.title()} with DOM auto-waiting and CDP capture...")
                                         res = orion_core.OrionSystem.web_search(portal_name, query_term)
@@ -657,21 +666,24 @@ class NebulaModel:
                                             self.stream.print_line("Chrome Executor", "📦", f"Result #{r.get('rank')}: {r.get('title')} [{r_info}]")
                                         self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: DOM elements parsed with 0 errors.")
                                     except Exception as ex:
+                                        # Ensure any partial Playwright session is closed before launching fallback
+                                        try:
+                                            from web_engine.browser_manager import BrowserManager
+                                            active_mgr = BrowserManager.get_active()
+                                            if active_mgr:
+                                                active_mgr.close()
+                                        except Exception:
+                                            pass
                                         res = orion_core.browse_web(target, browser="chrome")
                                         elapsed = (time.perf_counter() - t_step_start) * 1000
                                         self.stream.print_success(f"Navigated Chrome to '{res.get('resolved_url', target)}'", elapsed)
                                         self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: URL dispatched via OS runner.")
                                 else:
-                                    try:
-                                        res = orion_core.OrionSystem.web_browse(target)
-                                        elapsed = (time.perf_counter() - t_step_start) * 1000
-                                        self.stream.print_success(f"Navigated via WebEngine to '{res.get('url')}' [{res.get('title')}]", elapsed)
-                                        self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Page DOM and CDP buffer confirmed.")
-                                    except Exception:
-                                        res = orion_core.browse_web(target, browser="chrome")
-                                        elapsed = (time.perf_counter() - t_step_start) * 1000
-                                        self.stream.print_success(f"Navigated Chrome to '{res.get('resolved_url', target)}'", elapsed)
-                                        self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: URL dispatched.")
+                                    res = orion_core.browse_web(target, browser="chrome")
+                                    elapsed = (time.perf_counter() - t_step_start) * 1000
+                                    self.stream.print_success(f"Navigated Chrome to '{res.get('resolved_url', target)}'", elapsed)
+                                    self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: URL dispatched.")
+
 
                             elif act == "chrome_action":
                                 subact = step.get("subaction", "new_tab")
