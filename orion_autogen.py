@@ -38,34 +38,54 @@ except ImportError:
 
 
 class StreamConsole:
-    """Provides unbuffered, real-time line-by-line terminal stream with agent badges."""
+    """Provides unbuffered, real-time line-by-line terminal stream with signature Nebula branding."""
 
-    @staticmethod
-    def print_line(agent_name: str, emoji: str, message: str):
+    def __init__(self, minimal: bool = True):
+        self.minimal = minimal
+
+    def print_banner(self, goal: str):
+        if self.minimal:
+            bar = "─" * 60
+            sys.stdout.write(f"\n🌌 [Nebula] › \"{goal}\"\n")
+            sys.stdout.write(f"  {bar}\n")
+            sys.stdout.flush()
+        else:
+            bar = "=" * 76
+            sys.stdout.write(f"{bar}\n")
+            sys.stdout.write("  🌌 ORION SYSTEM × NEBULA MODEL (v2.0)\n")
+            sys.stdout.write("  Specialized Chrome Automation Engine | 5-Agent Cognitive Society\n")
+            sys.stdout.write("  Roles: Commander Nebula | Chrome Executor | Perception Inspector | Narrator | Critic\n")
+            sys.stdout.write(f"{bar}\n")
+            sys.stdout.write(f"Goal: \"{goal}\"\n\n")
+            sys.stdout.flush()
+
+    def print_step_done(self, idx: int, total: int, desc: str, elapsed_ms: float = None):
+        timing = f" ({elapsed_ms:.0f}ms)" if elapsed_ms is not None else ""
+        sys.stdout.write(f"  🌌 [{idx}/{total}] {desc}{timing} ✓\n")
+        sys.stdout.flush()
+
+    def print_done(self, total: int, elapsed_sec: float):
+        if self.minimal:
+            sys.stdout.write(f"  ────────────────────────────────────────────────────────────\n")
+            sys.stdout.write(f"🌌 [Nebula] Complete: {total} milestones finished in {elapsed_sec:.2f}s ✓\n\n")
+            sys.stdout.flush()
+
+    def print_line(self, agent_name: str, emoji: str, message: str):
+        if self.minimal:
+            return  # Suppress verbose agent chatter in minimal mode
         prefix = f"[{agent_name}] {emoji} "
         sys.stdout.write(f"{prefix}{message}\n")
         sys.stdout.flush()
 
-    @staticmethod
-    def print_success(message: str, elapsed_ms: float = None):
+    def print_success(self, message: str, elapsed_ms: float = None):
+        if self.minimal:
+            return  # Suppress verbose success lines in minimal mode
         timing = f" in {elapsed_ms:.1f}ms" if elapsed_ms is not None else ""
         sys.stdout.write(f"  [SUCCESS] {message}{timing}\n")
         sys.stdout.flush()
 
-    @staticmethod
-    def print_warning(message: str):
-        sys.stdout.write(f"  [RETRY/NOTICE] {message}\n")
-        sys.stdout.flush()
-
-    @staticmethod
-    def print_banner(goal: str):
-        bar = "=" * 76
-        sys.stdout.write(f"{bar}\n")
-        sys.stdout.write("  🌌 ORION SYSTEM × NEBULA MODEL (v2.0)\n")
-        sys.stdout.write("  Specialized Chrome Automation Engine | 5-Agent Cognitive Society\n")
-        sys.stdout.write("  Roles: Commander Nebula | Chrome Executor | Perception Inspector | Narrator | Critic\n")
-        sys.stdout.write(f"{bar}\n")
-        sys.stdout.write(f"Goal: \"{goal}\"\n\n")
+    def print_warning(self, message: str):
+        sys.stdout.write(f"  🌌 ⚠️ [Notice] {message}\n")
         sys.stdout.flush()
 
 
@@ -76,9 +96,10 @@ class NebulaModel:
     and coordinates execution via the Orion System Layer.
     """
 
-    def __init__(self, use_voice: bool = True):
+    def __init__(self, use_voice: bool = True, minimal: bool = True):
         self.use_voice = use_voice
-        self.stream = StreamConsole()
+        self.minimal = minimal
+        self.stream = StreamConsole(minimal=minimal)
         self.perception = orion_core.ContinuousPerceptionEngine(target_fps=6.0)
         self.healer = orion_core.SelfHealingResolver()
 
@@ -604,17 +625,22 @@ class NebulaModel:
         time.sleep(0.04)
 
         plan = self.decompose_goal(goal)
-        self.stream.print_line("Commander Nebula", "📋", f"Formulated {len(plan)}-milestone collaborative execution plan:")
-        for idx, step in enumerate(plan, 1):
-            sys.stdout.write(f"    {idx}. [{step['agent']}] -> {step['desc']}\n")
-        sys.stdout.flush()
-        print()
-        time.sleep(0.05)
+        if not self.minimal:
+            self.stream.print_line("Commander Nebula", "🧠", f"Received Chrome goal: \"{goal}\"")
+            self.stream.print_line("Commander Nebula", "📋", f"Formulated {len(plan)}-milestone collaborative execution plan:")
+            for idx, step in enumerate(plan, 1):
+                sys.stdout.write(f"    {idx}. [{step['agent']}] -> {step['desc']}\n")
+            sys.stdout.flush()
+            print()
+        else:
+            sys.stdout.write(f"  🌌 Formulated {len(plan)} milestones\n")
+            sys.stdout.flush()
 
         # 2. Start continuous non-blocking visual perception stream
         self.perception.start()
-        self.stream.print_line("Perception Inspector", "👁️", "Continuous screen perception engine online (6.0 FPS rolling buffer).")
-        print()
+        if not self.minimal:
+            self.stream.print_line("Perception Inspector", "👁️", "Continuous screen perception engine online (6.0 FPS rolling buffer).")
+            print()
 
         executed_steps = []
         healed_events = []
@@ -764,6 +790,9 @@ class NebulaModel:
                             self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Audio stream delivered.")
 
                         step_succeeded = True
+                        if self.minimal:
+                            desc = step.get("desc") or f"Milestone {idx}"
+                            self.stream.print_step_done(idx, len(plan), desc, elapsed_ms=elapsed)
                         break
 
                     except Exception as ex:
@@ -774,27 +803,31 @@ class NebulaModel:
 
                 # Continuous visual settlement check & live perception telemetry
                 self.perception.wait_for_settled(timeout=1.0)
-                p_state = self.perception.get_state()
-                delta_v = p_state.get("visual_delta_pct", 0.0)
-                settled_lbl = "Settled" if p_state.get("is_settled") else "Visual Updating"
-                active_proc = p_state.get("active_window", {}).get("process", "Desktop")
-                self.stream.print_line(
-                    "Perception Inspector",
-                    "👁️",
-                    f"Live Perception: {p_state.get('effective_fps', 6.0):.1f} FPS | Visual Delta: {delta_v:.2f}% [{settled_lbl}] | Foreground: {active_proc}"
-                )
+                if not self.minimal:
+                    p_state = self.perception.get_state()
+                    delta_v = p_state.get("visual_delta_pct", 0.0)
+                    settled_lbl = "Settled" if p_state.get("is_settled") else "Visual Updating"
+                    active_proc = p_state.get("active_window", {}).get("process", "Desktop")
+                    self.stream.print_line(
+                        "Perception Inspector",
+                        "👁️",
+                        f"Live Perception: {p_state.get('effective_fps', 6.0):.1f} FPS | Visual Delta: {delta_v:.2f}% [{settled_lbl}] | Foreground: {active_proc}"
+                    )
+                    print()
 
                 executed_steps.append({"step": idx, "agent": agent, "status": "success" if step_succeeded else "recovered"})
-                print()
                 time.sleep(0.03)
 
         finally:
             self.perception.stop()
 
         total_elapsed = time.perf_counter() - t_workflow_start
-        self.stream.print_line("Commander Nebula", "🏁", f"All {len(plan)} Chrome collaborative milestones executed.")
-        healed_note = f" (Self-Healing resolved {len(healed_events)} dialogs automatically)" if healed_events else ""
-        self.stream.print_line("Verifier Critic", "✅", f"Final Verdict: All criteria passed in {total_elapsed:.2f}s with 0 errors{healed_note}.")
+        if self.minimal:
+            self.stream.print_done(len(plan), total_elapsed)
+        else:
+            self.stream.print_line("Commander Nebula", "🏁", f"All {len(plan)} Chrome collaborative milestones executed.")
+            healed_note = f" (Self-Healing resolved {len(healed_events)} dialogs automatically)" if healed_events else ""
+            self.stream.print_line("Verifier Critic", "✅", f"Final Verdict: All criteria passed in {total_elapsed:.2f}s with 0 errors{healed_note}.")
 
         return {
             "status": "success",
@@ -813,24 +846,29 @@ OrionAgentSociety = NebulaModel
 
 def run_nebula_cli():
     """CLI entry point for Nebula Model collaborative Chrome workflows."""
-    args = sys.argv[1:]
-    if not args or args[0] in ("-h", "--help", "help"):
-        print("🌌 Orion System × Nebula Model (v2.0)")
-        print("Cognitive Model: Nebula (Chrome Specialized) | System Runtime: Orion")
-        print("\nUsage:")
-        print("  nebula \"<chrome goal>\"")
-        print("  orion team \"<chrome goal>\"")
-        print("\nExamples:")
+    raw_args = sys.argv[1:]
+    if not raw_args or raw_args[0] in ("-h", "--help", "help"):
+        print("🌌 Nebula v2.0 (Orion Engine)")
+        print("Autonomous Desktop & Chrome Operations\n")
+        print("Usage:")
+        print("  nebula \"<goal>\"            (clean, minimal output)")
+        print("  nebula --verbose \"<goal>\"  (detailed multi-agent telemetry)\n")
+        print("Examples:")
+        print("  nebula \"play kangal neeye on youtube\"")
         print("  nebula \"open google play and search for free fire\"")
-        print("  nebula \"open youtube and search for lofi beats\"")
         print("  nebula \"search github for autogen\"")
-        print("  nebula \"open new tab and go to wikipedia.org\"")
-        print("  nebula \"scroll down in chrome and take screenshot\"")
-        print("  nebula \"close tab and announce done\"")
         return
 
+    verbose = False
+    args = []
+    for a in raw_args:
+        if a in ("--verbose", "-v"):
+            verbose = True
+        else:
+            args.append(a)
+
     goal = " ".join(args).strip('\'"')
-    model = NebulaModel(use_voice=True)
+    model = NebulaModel(use_voice=True, minimal=(not verbose))
     model.run_collaborative_workflow(goal)
 
 

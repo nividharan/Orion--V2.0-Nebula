@@ -2912,9 +2912,9 @@ def run_interactive_console():
 
     while True:
         try:
-            line = input("orion> ").strip().lstrip("\ufeff").lstrip("ï»¿")
+            line = input("🌌 nebula> ").strip().lstrip("\ufeff").lstrip("ï»¿")
         except (EOFError, KeyboardInterrupt):
-            print("\n[SUCCESS] Exiting Orion Console. Goodbye!")
+            print("\n🌌 Exiting Nebula Console. Goodbye!")
             break
 
         if not line:
@@ -3404,9 +3404,10 @@ def main():
     # console / shell / interactive
     subparsers.add_parser("console", aliases=["shell", "interactive"], help="Start interactive terminal console")
 
-    # team / run / workflow (AutoGen multi-agent collaboration)
-    p_team = subparsers.add_parser("team", aliases=["run", "workflow"], help="Execute goal with AutoGen 5-Agent Collaborative Society")
+    # team / run / workflow / nebula (Multi-agent collaboration)
+    p_team = subparsers.add_parser("team", aliases=["run", "workflow", "nebula"], help="Execute goal with Nebula Model & Orion Engine")
     p_team.add_argument("goal", nargs="+", help="Goal prompt for the agent society")
+    p_team.add_argument("--verbose", "-v", action="store_true", help="Show verbose multi-agent logs")
 
     # watch (continuous screen perception telemetry)
     p_watch = subparsers.add_parser("watch", aliases=["monitor_stream"], help="Live continuous screen perception monitor")
@@ -3434,10 +3435,11 @@ def main():
         print(json.dumps(result, indent=2))
         return
 
-    if args.command in ("team", "run", "workflow"):
+    if args.command in ("team", "run", "workflow", "nebula"):
         goal_text = " ".join(args.goal)
         import orion_autogen
-        society = orion_autogen.OrionAgentSociety(use_voice=True)
+        verbose = getattr(args, "verbose", False)
+        society = orion_autogen.OrionAgentSociety(use_voice=True, minimal=(not verbose))
         society.run_collaborative_workflow(goal_text)
         return
 
