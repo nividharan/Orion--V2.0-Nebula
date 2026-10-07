@@ -31,12 +31,12 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
-# Minimal stealth script: ONLY remove webdriver and fix permissions (no fake hardware/UA)
+# Minimal stealth script: Report false for navigator.webdriver (matching real headed Chrome)
 MINIMAL_STEALTH_SCRIPT = """
 (() => {
-    // 1. Remove navigator.webdriver flag cleanly
+    // 1. Report navigator.webdriver as false (real headed Chrome reports false, not undefined)
     Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
+        get: () => false,
         configurable: true
     });
 
@@ -299,7 +299,11 @@ class BrowserManager:
             time.sleep(random.uniform(min_sec, max_sec))
 
     def navigate(self, url: str, wait_until: str = "domcontentloaded") -> dict:
-        """Navigates to URL with auto-waiting and rate-limit backoff handling."""
+        """
+        Navigates to URL with auto-waiting and rate-limit backoff handling.
+        Guards against networkidle infinite hangs by navigating via domcontentloaded
+        and capping networkidle wait with a non-fatal 3000ms safety timeout.
+        """
         page = self.launch()
         t0 = time.time()
 
@@ -310,7 +314,17 @@ class BrowserManager:
             self._last_retry_after = None
 
         try:
-            page.goto(url, wait_until=wait_until, timeout=self.config.navigation_timeout_ms)
+            # Prevent networkidle hang: navigate using domcontentloaded or load
+            effective_wait = "domcontentloaded" if wait_until == "networkidle" else wait_until
+            page.goto(url, wait_until=effective_wait, timeout=self.config.navigation_timeout_ms)
+
+            # If caller explicitly requested networkidle, wait with a strict non-fatal timeout
+            if wait_until == "networkidle":
+                try:
+                    page.wait_for_load_state("networkidle", timeout=3000)
+                except Exception:
+                    logger.debug("networkidle wait reached 3000ms safety cap; continuing with loaded DOM.")
+
             self.human_delay()
             elapsed_ms = round((time.time() - t0) * 1000, 2)
             shot_res = self.capture_cdp_screenshot()
@@ -326,6 +340,37 @@ class BrowserManager:
         except Exception as e:
             artifacts = self.capture_failure_artifacts("navigate")
             raise PageLoadTimeoutError(f"Failed to navigate to '{url}': {e}. Artifacts: {artifacts}") from e
+
+    def verify_or_refresh_session(
+        self,
+        validity_probe: Callable[[Page], bool],
+        relogin_callback: Optional[Callable[[Page], None]] = None
+    ) -> bool:
+        """
+        Validates session state against an expired-session probe.
+        If expired and relogin_callback is provided, executes re-login flow and updates session.
+        """
+        page = self.launch()
+        is_valid = validity_probe(page)
+        if not is_valid and relogin_callback:
+            logger.warning("Session probe reported expired state. Triggering automated re-login flow...")
+            relogin_callback(page)
+            self.save_session_state()
+            return validity_probe(page)
+        return is_valid
+
+    @staticmethod
+    def run_isolated(func: Callable[..., Any], *args, **kwargs) -> Any:
+        """
+        Executes a Playwright operation inside a dedicated worker thread.
+        Solves the sync vs async mismatch for AutoGen / Orion: prevents
+        'Playwright Sync API inside asyncio loop' errors when called from async agents.
+        """
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(func, *args, **kwargs)
+            return future.result()
+
 
     def close(self):
         """Gracefully closes tracing, context, browser, and playwright instance."""

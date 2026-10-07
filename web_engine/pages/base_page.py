@@ -18,8 +18,14 @@ from playwright.sync_api import Page, Locator, TimeoutError as PlaywrightTimeout
 
 from ..browser_manager import BrowserManager
 from ..exceptions import SelectorNotFoundError, ActionNotAllowedError, WebEngineError
-from ..locators.base_locators import COOKIE_CONSENT_LOCATORS, MODAL_CLOSE_LOCATORS
-from ..config import SENSITIVE_ACTIONS
+from ..locators.base_locators import (
+    COOKIE_CONSENT_LOCATORS,
+    CMP_MANAGE_PREFERENCES_LOCATORS,
+    CMP_CONFIRM_OR_REJECT_LOCATORS,
+    MODAL_CLOSE_LOCATORS
+)
+from ..config import SENSITIVE_ACTIONS, DOMAIN_ALLOW_LIST, is_action_or_target_sensitive
+
 
 logger = logging.getLogger("Orion.BasePage")
 
@@ -122,13 +128,13 @@ class BasePage:
         if mem_sel:
             try:
                 loc = self.resolve_locator(mem_sel, context=context)
-                if loc.first.is_visible(timeout=probe_timeout):
-                    self._log_action("resolve_locator_memory", target_name, mem_sel, time.time() - t0, "success")
-                    return loc.first
+                loc.first.wait_for(state="visible", timeout=probe_timeout)
+                self._log_action("resolve_locator_memory", target_name, mem_sel, time.time() - t0, "success")
+                return loc.first
             except Exception:
                 pass
 
-        # 2. Short-probe through fallback chain
+        # 2. Short-probe through fallback chain using wait_for (properly waits for SPA renders)
         matched_loc: Optional[Locator] = None
         matched_sel: Optional[Dict[str, Any]] = None
 
@@ -136,11 +142,11 @@ class BasePage:
             tried.append(sel)
             try:
                 candidate = self.resolve_locator(sel, context=context)
-                if candidate.first.is_visible(timeout=probe_timeout):
-                    matched_loc = candidate.first
-                    matched_sel = sel
-                    break
-            except Exception:
+                candidate.first.wait_for(state="visible", timeout=probe_timeout)
+                matched_loc = candidate.first
+                matched_sel = sel
+                break
+            except (PlaywrightTimeoutError, Exception):
                 continue
 
         # 3. If matched, wait for full actionability and remember working selector
@@ -158,11 +164,11 @@ class BasePage:
         for sel in fallback_chain[:2]:
             try:
                 candidate = self.resolve_locator(sel, context=context)
-                if candidate.first.is_visible(timeout=probe_timeout):
-                    candidate.first.wait_for(state="visible", timeout=1200)
-                    self._save_site_memory(domain, target_name, sel)
-                    return candidate.first
-            except Exception:
+                candidate.first.wait_for(state="visible", timeout=probe_timeout)
+                candidate.first.wait_for(state="visible", timeout=1200)
+                self._save_site_memory(domain, target_name, sel)
+                return candidate.first
+            except (PlaywrightTimeoutError, Exception):
                 continue
 
         # 5. Raise structured SelectorNotFoundError with page state for future AI recovery
@@ -180,15 +186,40 @@ class BasePage:
         target_name: str = "button",
         timeout_ms: int = 6000
     ):
-        """Finds visible element from fallback chain and clicks with auto-waiting."""
+        """Finds visible element from fallback chain and clicks with auto-waiting and safety guards."""
         t0 = time.time()
+        domain = self.get_domain()
+        if DOMAIN_ALLOW_LIST is not None and domain not in DOMAIN_ALLOW_LIST:
+            raise ActionNotAllowedError(f"Domain '{domain}' is not in DOMAIN_ALLOW_LIST.")
+
         self.dismiss_cookie_banners()
         loc = self.find_first_visible(fallback_chain, target_name, timeout_ms)
+
+        # Inspect target element accessible text to guard against sensitive actions
+        # (e.g. clicking 'Place order', 'Delete account', 'Submit payment')
+        accessible_text = ""
+        try:
+            accessible_text = (
+                loc.get_attribute("aria-label") or
+                loc.inner_text() or
+                loc.get_attribute("value") or
+                loc.get_attribute("title") or
+                ""
+            ).strip()
+        except Exception:
+            pass
+
+        if is_action_or_target_sensitive("click", target_name, accessible_text):
+            raise ActionNotAllowedError(
+                f"Action 'click' on target '{target_name}' (accessible name: '{accessible_text}') "
+                f"is sensitive and requires explicit human confirmation."
+            )
+
         loc.scroll_into_view_if_needed()
         self.mgr.human_delay(0.1, 0.2)
         loc.click(timeout=timeout_ms)
         self.mgr.human_delay(0.1, 0.25)
-        self._log_action("click", target_name, {}, time.time() - t0, "success")
+        self._log_action("click", target_name, {"accessible_name": accessible_text}, time.time() - t0, "success")
 
     def fill_with_fallback(
         self,
@@ -198,10 +229,32 @@ class BasePage:
         timeout_ms: int = 6000,
         press_enter: bool = False
     ):
-        """Finds visible input element, clears it, and types value."""
+        """Finds visible input element, clears it, and types value with safety guards."""
         t0 = time.time()
+        domain = self.get_domain()
+        if DOMAIN_ALLOW_LIST is not None and domain not in DOMAIN_ALLOW_LIST:
+            raise ActionNotAllowedError(f"Domain '{domain}' is not in DOMAIN_ALLOW_LIST.")
+
         self.dismiss_cookie_banners()
         loc = self.find_first_visible(fallback_chain, target_name, timeout_ms)
+
+        accessible_text = ""
+        try:
+            accessible_text = (
+                loc.get_attribute("aria-label") or
+                loc.get_attribute("placeholder") or
+                loc.get_attribute("name") or
+                ""
+            ).strip()
+        except Exception:
+            pass
+
+        if is_action_or_target_sensitive("fill", target_name, accessible_text):
+            raise ActionNotAllowedError(
+                f"Action 'fill' on target '{target_name}' (accessible name: '{accessible_text}') "
+                f"is sensitive and requires explicit human confirmation."
+            )
+
         loc.scroll_into_view_if_needed()
         loc.click()
         loc.fill("")
@@ -211,34 +264,62 @@ class BasePage:
             self.mgr.human_delay(0.1, 0.2)
             loc.press("Enter")
         self.mgr.human_delay(0.1, 0.2)
-        self._log_action("fill", target_name, {"length": len(value), "press_enter": press_enter}, time.time() - t0, "success")
+        self._log_action("fill", target_name, {"length": len(value), "press_enter": press_enter, "accessible_name": accessible_text}, time.time() - t0, "success")
 
     def dismiss_cookie_banners(self):
         """
         Safely dismisses cookie consent dialogs:
-        - Scoped to dialog/modal containers
-        - Prioritizes 'Reject all' / 'Necessary only' before 'Accept all'
-        - Caps attempts to 1 dismissal per page
+        - Step 1: Checks direct 'Reject all' / 'Necessary only' buttons.
+        - Step 2: Multi-step CMP flow (OneTrust, Cookiebot, Didomi): If direct reject is hidden
+                  behind 'Manage preferences' / 'Cookie Settings', clicks it, then clicks
+                  'Reject all' / 'Confirm my choices'.
+        - Step 3: Generic modal dismissers.
         """
+        # 1. Direct rejection locators
         for sel in COOKIE_CONSENT_LOCATORS:
             try:
                 loc = self.resolve_locator(sel)
-                if loc.first.is_visible(timeout=180):
-                    loc.first.click(timeout=600)
-                    logger.info(f"Safely handled cookie dialog via {sel.get('name', sel.get('css', 'selector'))}.")
-                    self.mgr.human_delay(0.1, 0.2)
-                    break
+                loc.first.wait_for(state="visible", timeout=180)
+                loc.first.click(timeout=600)
+                logger.info(f"Safely handled cookie dialog via direct {sel.get('name', sel.get('css', 'selector'))}.")
+                self.mgr.human_delay(0.1, 0.2)
+                return
             except Exception:
                 continue
 
+        # 2. Multi-step CMP flow (Manage preferences -> Reject all)
+        for pref_sel in CMP_MANAGE_PREFERENCES_LOCATORS:
+            try:
+                loc = self.resolve_locator(pref_sel)
+                loc.first.wait_for(state="visible", timeout=180)
+                loc.first.click(timeout=600)
+                logger.info(f"Opened CMP preference panel via {pref_sel.get('name', pref_sel.get('css', 'selector'))}.")
+                self.mgr.human_delay(0.1, 0.2)
+
+                for conf_sel in CMP_CONFIRM_OR_REJECT_LOCATORS:
+                    try:
+                        conf_loc = self.resolve_locator(conf_sel)
+                        conf_loc.first.wait_for(state="visible", timeout=400)
+                        conf_loc.first.click(timeout=600)
+                        logger.info(f"Rejected CMP cookies inside preferences via {conf_sel.get('name', conf_sel.get('css', 'selector'))}.")
+                        self.mgr.human_delay(0.1, 0.2)
+                        return
+                    except Exception:
+                        continue
+                return
+            except Exception:
+                continue
+
+        # 3. Dismiss blocking generic popups
         for sel in MODAL_CLOSE_LOCATORS:
             try:
                 loc = self.resolve_locator(sel)
-                if loc.first.is_visible(timeout=150):
-                    loc.first.click(timeout=500)
-                    break
+                loc.first.wait_for(state="visible", timeout=150)
+                loc.first.click(timeout=500)
+                break
             except Exception:
                 continue
+
 
     def scroll_until_no_new_content(
         self,
@@ -308,13 +389,22 @@ class BasePage:
         except Exception:
             return ""
 
-    def retry_idempotent(self, action_name: str, func: Callable, max_retries: int = 3, backoff: float = 1.5):
+    def retry_idempotent(
+        self,
+        action_name: str,
+        func: Callable,
+        max_retries: int = 3,
+        backoff: float = 1.5,
+        target_text: Optional[str] = None
+    ):
         """
         Executes idempotent operations with exponential backoff.
-        Guarantees that non-idempotent actions (submit/pay/send) are NEVER retried.
+        Guarantees that sensitive actions (by action name OR target accessible text) are NEVER retried.
         """
-        if any(s in action_name.lower() for s in SENSITIVE_ACTIONS):
-            raise ActionNotAllowedError(f"Auto-retry blocked on sensitive non-idempotent action: '{action_name}'")
+        if is_action_or_target_sensitive(action_name, target_text):
+            raise ActionNotAllowedError(
+                f"Auto-retry blocked on sensitive non-idempotent action/target: '{action_name}' ('{target_text}')"
+            )
 
         last_err = None
         for attempt in range(1, max_retries + 1):
@@ -330,6 +420,7 @@ class BasePage:
                 raise non_retryable
 
         raise last_err
+
 
     def _log_action(self, action: str, target: Any, details: Dict[str, Any], duration: float, status: str):
         """Records structured JSON action entry for observability."""

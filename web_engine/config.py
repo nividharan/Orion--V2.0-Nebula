@@ -33,7 +33,49 @@ SENSITIVE_ACTIONS: Set[str] = {
     "checkout"
 }
 
+# Security: Sensitive target keywords (accessible name, button text, aria-label, etc.)
+SENSITIVE_TARGET_KEYWORDS: Set[str] = {
+    "order",
+    "place order",
+    "pay",
+    "payment",
+    "buy",
+    "purchase",
+    "checkout",
+    "delete",
+    "destroy",
+    "remove account",
+    "transfer",
+    "subscribe",
+    "submit payment"
+}
+
+# Security: Domain allow-list (None means all allowed, or set of allowed hostnames)
+DOMAIN_ALLOW_LIST: Optional[Set[str]] = None
+
 MAX_STEPS_PER_TASK: int = 25
+
+
+def is_action_or_target_sensitive(
+    action_name: str,
+    target_text: Optional[str] = None,
+    accessible_name: Optional[str] = None
+) -> bool:
+    """
+    Evaluates whether an action or the element being interacted with is sensitive.
+    Guards both action names ('pay', 'checkout') AND target element labels ('Place order', 'Delete account').
+    """
+    act_lower = action_name.lower().strip()
+    if act_lower in SENSITIVE_ACTIONS:
+        return True
+
+    text_to_check = f"{target_text or ''} {accessible_name or ''}".lower()
+    for kw in SENSITIVE_TARGET_KEYWORDS:
+        if kw in text_to_check:
+            return True
+
+    return False
+
 
 
 @dataclass

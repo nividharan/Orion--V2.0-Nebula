@@ -1,5 +1,17 @@
+# Caches and runtime profiles
 .cache/
+browser_profile/
 __pycache__/
 *.pyc
+
+# Sensitive artifacts & sessions
+storage_state.json
+*.zip
+*.log
+*.html
+
+# Media (keep committed asset banners)
 *.png
+!assets/*
+*.jpg
 !assets/*

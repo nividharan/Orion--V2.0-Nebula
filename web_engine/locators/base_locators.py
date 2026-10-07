@@ -26,6 +26,31 @@ COOKIE_CONSENT_LOCATORS = [
     {"css": "button.cookie-accept"}
 ]
 
+# Multi-step CMP locators (e.g., OneTrust, Cookiebot, Didomi)
+# When direct 'Reject all' is hidden behind a 'Manage preferences' / 'Settings' step:
+CMP_MANAGE_PREFERENCES_LOCATORS = [
+    {"role": "button", "name": "Manage preferences"},
+    {"role": "button", "name": "Cookie Settings"},
+    {"role": "button", "name": "Preferences"},
+    {"role": "button", "name": "Customize"},
+    {"role": "button", "name": "Manage Choices"},
+    {"css": "#onetrust-pc-btn-handler"},
+    {"css": "button.cookie-settings"},
+    {"css": "button.cmp-preferences"}
+]
+
+CMP_CONFIRM_OR_REJECT_LOCATORS = [
+    {"role": "button", "name": "Reject all"},
+    {"role": "button", "name": "Reject All"},
+    {"role": "button", "name": "Disable all"},
+    {"role": "button", "name": "Confirm my choices"},
+    {"role": "button", "name": "Save preferences"},
+    {"css": "button.ot-pc-refuse-all-handler"},
+    {"css": "#save-preference-btn-handler"},
+    {"css": "button.cmp-save"}
+]
+
+
 # Modal close buttons scoped to dialog containers
 MODAL_CLOSE_LOCATORS = [
     {"role": "button", "name": "Close"},
