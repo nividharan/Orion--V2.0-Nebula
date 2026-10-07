@@ -32,6 +32,11 @@ if ($firstArg -eq "heal") {
     return
 }
 
+if ($firstArg -in @("doctor", "health", "check")) {
+    & python $PythonScript doctor
+    return
+}
+
 if ($firstArg -eq "chrome") {
     $chromeArgs = $ArgsList[1..($ArgsList.Count - 1)]
     & python $PythonScript chrome @chromeArgs

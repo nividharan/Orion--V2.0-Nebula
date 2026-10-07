@@ -57,32 +57,50 @@ Orion v2.0 establishes a clean separation between the **OS System Layer** and th
 ## 🚀 Quick Start
 
 ### 1. Run the Nebula Cognitive Model (Natural Language Chrome Goals)
-Use the `nebula` CLI to run natural language tasks directly through the 5-agent society:
+Use `python orion_autogen.py` or the `nebula` CLI to run natural language tasks directly through the 5-agent society:
 
 ```powershell
+# Direct Video / Media Playback (Resolves to top YouTube video with autoplay & active focus)
+python orion_autogen.py "play kangal neeye on youtube"
+python orion_autogen.py "chrome play song"
+python orion_autogen.py "open chrome and play tamil songs in youtube"
+
+# System & API Diagnostics (Check Zero-Key Status & Health)
+python orion_autogen.py doctor
+
 # Search Google Play Store directly
-nebula "open google play and search for free fire"
+python orion_autogen.py "open google play and search for free fire"
 
 # Search YouTube for music or tutorials
-nebula "open youtube and search for lofi beats"
+python orion_autogen.py "open youtube and search for lofi beats"
 
 # Search GitHub repositories
-nebula "search github for autogen"
+python orion_autogen.py "search github for autogen"
 
 # Tab and page controls
-nebula "open new tab and go to wikipedia.org"
-nebula "scroll down in chrome and take screenshot"
-nebula "close tab and announce done"
+python orion_autogen.py "open new tab and go to wikipedia.org"
+python orion_autogen.py "scroll down in chrome and take screenshot"
+python orion_autogen.py "close tab and announce done"
+
+# Verbose Multi-Agent Telemetry Mode
+python orion_autogen.py --verbose "play believer on youtube"
 ```
 
 ### 2. Run the Orion System Layer (Fast Primitives)
-Use the `orion` CLI for direct system operations:
+Use `python desktop_controller.py` or the `orion` CLI for direct system operations:
 
 ```powershell
+# Direct Media Playback (<800ms resolution directly to watch URL)
+python desktop_controller.py browse "play kangal neeye on youtube"
+python desktop_controller.py browse "chrome play song"
+
+# System Diagnostics
+python desktop_controller.py doctor
+
 # Direct Web Navigation (<50ms)
-orion browse "play store free fire"              # Resolves to Google Play search
-orion browse "youtube lofi hip hop"              # Resolves to YouTube search
-orion browse "https://github.com"                # Direct URL launch in Chrome
+python desktop_controller.py browse "play store free fire"              # Resolves to Google Play search
+python desktop_controller.py browse "youtube lofi hip hop"              # Resolves to YouTube search
+python desktop_controller.py browse "https://github.com"                # Direct URL launch in Chrome
 
 # Dedicated Chrome-Native Controls
 orion chrome new_tab "https://github.com"        # Open new tab to URL
