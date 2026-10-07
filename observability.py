@@ -208,6 +208,7 @@ def run_regression_suite(verbose: bool = False) -> Dict[str, Any]:
         "tests.test_playback",
         "tests.test_api_client",
         "tests.test_society",
+        "tests.test_banner",
     ]
 
     suite = unittest.TestSuite()

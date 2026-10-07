@@ -316,7 +316,7 @@ def search(query: str, max_results: int = 10, allow_live: bool = False) -> list[
         }
     )
     try:
-        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8', errors='ignore')
+        html = urllib.request.urlopen(req, timeout=8).read().decode('utf-8', errors='ignore')
     except Exception as exc:
         raise RuntimeError(f'YouTube search request failed: {exc}') from exc
 

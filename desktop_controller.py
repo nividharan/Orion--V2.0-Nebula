@@ -1529,12 +1529,17 @@ PORTAL_MAP = {
 def resolve_youtube_top_video_url(query: str):
     """Fetches top matching YouTube video watch URL for direct instant playback (<800ms)."""
     try:
-        from nebula_brain import NebulaBrain
-        media = NebulaBrain.resolve_youtube_media(query)
-        if media and media.get("url"):
-            return media["url"]
-    except Exception:
-        pass
+        from resolvers.youtube import search
+        candidates = search(query, max_results=5)
+        if candidates and len(candidates) > 0:
+            top_url = candidates[0].get("url") if isinstance(candidates[0], dict) else getattr(candidates[0], "url", None)
+            if top_url:
+                separator = "&" if "?" in top_url else "?"
+                if "autoplay=1" not in top_url:
+                    top_url = f"{top_url}{separator}autoplay=1"
+                return top_url
+    except Exception as e:
+        logger.warning(f"resolvers.youtube.search error: {e}")
 
     try:
         import re
@@ -1546,10 +1551,10 @@ def resolve_youtube_top_video_url(query: str):
             f"https://www.youtube.com/results?search_query={encoded}",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         )
-        html = urllib.request.urlopen(req, timeout=3).read().decode("utf-8", errors="ignore")
+        html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", errors="ignore")
         vids = re.findall(r'/watch\?v=([a-zA-Z0-9_-]{11})', html)
         if vids:
-            return f"https://www.youtube.com/watch?v={vids[0]}"
+            return f"https://www.youtube.com/watch?v={vids[0]}&autoplay=1"
     except Exception:
         pass
     return None
@@ -1566,6 +1571,27 @@ def resolve_web_target(query_or_url: str) -> str:
 
     clean_lower = clean.lower()
 
+    # Direct Play / Music commands (e.g. "play kangal neeye", "chrome play song", "play a song in youtube", "listen to believer")
+    if re.search(r'\b(play|listen|stream|start\s+playing)\b', clean, re.I):
+        s_clean = re.sub(r'^(?:can\s+you\s+|please\s+|could\s+you\s+)?', '', clean, flags=re.I)
+        s_clean = re.sub(r'^(?:open|launch|start|go\s+to)\s+(?:chrome|google\s+chrome|browser)\s*(?:and\s+|,)?\s*', '', s_clean, flags=re.I)
+        s_clean = re.sub(r'^(?:in|on)\s+(?:chrome|google\s+chrome|browser)\s*', '', s_clean, flags=re.I)
+        s_clean = re.sub(r'^chrome\s+', '', s_clean, flags=re.I)
+        s_clean = re.sub(r'\b(?:on|in)?\s*youtube\b', '', s_clean, flags=re.I).strip()
+        s_clean = re.sub(r'^(?:search\s+(?:for\s+)?and\s+play|search\s+and\s+play)\s*', '', s_clean, flags=re.I)
+        s_clean = re.sub(r'^(?:play|listen\s+to|stream|start)\s*', '', s_clean, flags=re.I)
+        song_term = s_clean.strip()
+        song_term = re.sub(r'^(?:a\s+song|the\s+song|song|songs|music|some\s+song|some\s+songs|video|videos)\s*(?:named|called|of)?\s*', '', song_term, flags=re.I).strip()
+        song_term = re.sub(r'\btamol\b', 'tamil', song_term, flags=re.I).strip()
+        if song_term.lower() in ('tamil', 'hindi', 'telugu', 'english', 'malayalam', 'punjabi', 'kannada'):
+            song_term = f"{song_term} songs"
+        elif not song_term or song_term.lower() in ("a song", "song", "songs", "some song", "some songs", "music"):
+            song_term = "trending songs"
+        direct_vid = resolve_youtube_top_video_url(song_term)
+        if direct_vid:
+            return direct_vid
+        return f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(song_term)}"
+
     # Special handling for Google Play Store search queries
     if "google play" in clean_lower or "play store" in clean_lower or "playstore" in clean_lower:
         sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on|go\s+to)\s+', '', clean, flags=re.I)
@@ -1581,10 +1607,12 @@ def resolve_web_target(query_or_url: str) -> str:
         sub_query = re.sub(r'(?:in|on)?\s*youtube', '', sub_query, flags=re.I).strip()
         sub_query = re.sub(r'^(?:for|search\s*for|and\s+search\s+for|and\s+search)\s+', '', sub_query, flags=re.I).strip()
         if sub_query:
-            should_play = bool(re.search(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen)\b', sub_query, re.I))
-            clean_sub = re.sub(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen)\b', '', sub_query, flags=re.I).strip()
-            clean_sub = re.sub(r'^(?:a|an|the)\s+', '', clean_sub, flags=re.I).strip()
+            should_play = bool(re.search(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen|stream)\b', sub_query, re.I)) or any(k in clean_lower for k in ["play", "listen", "song"])
+            clean_sub = re.sub(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen|stream)\b', '', sub_query, flags=re.I).strip()
+            clean_sub = re.sub(r'^(?:a|an|the|for|song|songs)\s+', '', clean_sub, flags=re.I).strip()
             clean_sub = re.sub(r'\btamol\b', 'tamil', clean_sub, flags=re.I)
+            if not clean_sub:
+                clean_sub = "trending songs"
             if should_play:
                 direct_video = resolve_youtube_top_video_url(clean_sub)
                 if direct_video:
@@ -3416,10 +3444,18 @@ def main():
     # heal (autonomous self-healing scan and modal dismissal)
     subparsers.add_parser("heal", help="Autonomous self-healing scan and error dialog auto-dismissal")
 
+    # doctor (health check, API integrations, and diagnostics)
+    subparsers.add_parser("doctor", aliases=["check_env", "health"], help="Inspect system diagnostics, API integrations, and perception health")
+
     args = parser.parse_args()
 
     if not args.command:
         parser.print_help()
+        return
+
+    if args.command in ("doctor", "check_env", "health"):
+        import orion_autogen
+        orion_autogen.run_doctor()
         return
 
     if args.command in ("console", "shell", "interactive"):
