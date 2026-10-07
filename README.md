@@ -36,9 +36,10 @@ Orion v2.0 establishes a clean separation between the **OS System Layer** and th
 
 ## ⚡ Key Capabilities
 
-* **Chrome-Specialized Operations**: Built specifically for Google Chrome browsing, portal searching, tab controls, address bar navigation, in-page typing, scrolling, and verification.
-* **Playwright Production Web Engine (`web_engine`)**: Auto-waiting, infinite scroll helpers, role-based selector fallback chains, anti-bot stealth evasions (`navigator.webdriver` removal), and persistent session storage (`storage_state.json`).
+* **Hardened Playwright Web Engine (`web_engine`)**: Auto-waiting locator chains (`locators/`), short-probe dynamic element resolution with `wait_for`, multi-step CMP cookie consent handlers (OneTrust / Cookiebot), anti-bot stealth evasions (`navigator.webdriver` strictly reports `false`), atomic state persistence, 7-day artifact auto-pruning, and startup Git exposure guards.
 * **Dual-Engine Screen Perception**: Direct Chrome DevTools Protocol (CDP) in-memory framebuffer capture (100% immune to Windows GDI BitBlt access-denied restrictions) combined with hardened Win32 desktop capture.
+* **Security Guardrails**: Action allow-lists, domain allow-lists, and accessible-name target guards that intercept sensitive actions (e.g., "Place order", "Delete account", payments) before execution.
+
 * **Structured Data Extraction**: Clean JSON and CSV dataset exports with deduplication, currency normalization, and ISO timestamps.
 * **Zero Distraction / Pure Execution**: Purged of irrelevant 3D routines to guarantee reliable execution of your exact browser commands.
 * **5-Agent Collaborative Society**:
