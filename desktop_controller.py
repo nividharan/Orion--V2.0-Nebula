@@ -3157,8 +3157,40 @@ class OrionSystem:
             return page.search_google_play(query, limit=limit)
         elif "youtube" in p:
             return page.search_youtube(query, limit=limit)
-        else:
-            return page.search_generic(f"https://www.google.com/search?q={query}", query)
+    @staticmethod
+    def web_action(action: str, params: dict = None) -> dict:
+        """Executes authorized web action with security allow-list enforcement."""
+        from web_engine.config import ALLOWED_ACTIONS, SENSITIVE_ACTIONS
+        from web_engine.exceptions import ActionNotAllowedError
+        from web_engine.browser_manager import BrowserManager
+        from web_engine.pages.base_page import BasePage
+        act = action.lower().strip()
+        if act not in ALLOWED_ACTIONS:
+            raise ActionNotAllowedError(f"Action '{act}' blocked. Allowed actions: {ALLOWED_ACTIONS}")
+        if act in SENSITIVE_ACTIONS:
+            raise ActionNotAllowedError(f"Action '{act}' is sensitive and blocked from automated execution.")
+        mgr = BrowserManager.get_active()
+        if not mgr or not mgr.is_running:
+            raise RuntimeError("No active Playwright browser session found for web_action.")
+        page = BasePage(mgr)
+        p = params or {}
+        if act == "screenshot":
+            return mgr.capture_cdp_screenshot(p.get("path"))
+        elif act == "aria_snapshot":
+            return {"status": "success", "aria_tree": page.aria_snapshot()}
+        elif act == "scroll":
+            return {"status": "success", "items_loaded": page.scroll_until_no_new_content(max_iterations=p.get("iterations", 6))}
+        return {"status": "success", "action": act}
+
+    @staticmethod
+    def web_aria_snapshot() -> str:
+        """Produces a compact semantic accessibility tree for Perception Inspector."""
+        from web_engine.browser_manager import BrowserManager
+        from web_engine.pages.base_page import BasePage
+        mgr = BrowserManager.get_active()
+        if mgr and mgr.is_running:
+            return BasePage(mgr).aria_snapshot()
+        return ""
 
     Perception = ContinuousPerceptionEngine
     Healer = SelfHealingResolver

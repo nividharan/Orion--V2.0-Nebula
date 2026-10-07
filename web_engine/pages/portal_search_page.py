@@ -10,15 +10,15 @@ from typing import List, Dict, Any, Optional
 
 from .base_page import BasePage
 from ..browser_manager import BrowserManager
-from ..selectors.google_play_selectors import (
+from ..locators.google_play_locators import (
     PLAY_STORE_SEARCH_BAR, PLAY_STORE_SEARCH_BUTTON,
     PLAY_STORE_APP_CARDS, PLAY_STORE_APP_TITLE, PLAY_STORE_APP_DEVELOPER, PLAY_STORE_APP_RATING
 )
-from ..selectors.youtube_selectors import (
+from ..locators.youtube_locators import (
     YOUTUBE_SEARCH_BAR, YOUTUBE_SEARCH_BUTTON,
     YOUTUBE_VIDEO_CARDS, YOUTUBE_VIDEO_TITLE, YOUTUBE_CHANNEL_NAME
 )
-from ..selectors.base_selectors import GENERIC_SEARCH_INPUTS
+from ..locators.base_locators import GENERIC_SEARCH_LOCATORS
 
 
 class PortalSearchPage(BasePage):
@@ -141,9 +141,9 @@ class PortalSearchPage(BasePage):
 
     def search_generic(self, url: str, query: str) -> Dict[str, Any]:
         """Navigates to URL and performs search via generic search inputs."""
-        self.mgr.navigate(url, wait_until="load")
+        self.mgr.navigate(url, wait_until="domcontentloaded")
         self.dismiss_cookie_banners()
-        self.fill_with_fallback(GENERIC_SEARCH_INPUTS, query, target_name="search_box", press_enter=True)
+        self.fill_with_fallback(GENERIC_SEARCH_LOCATORS, query, target_name="search_box", press_enter=True)
         self.wait_for_network_idle(6000)
         shot = self.mgr.capture_cdp_screenshot()
         return {

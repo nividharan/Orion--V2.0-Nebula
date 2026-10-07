@@ -1,27 +1,22 @@
 """
-🌌 Orion × Nebula Web Engine - Google Play Store Selectors
-Role, aria-label, testid, and structural selectors for Google Play Store.
+🌌 Orion × Nebula Web Engine - Google Play Store Locators
+Role, aria-label, and structural locators with explicit names for Google Play Store.
 """
 
-# Search Bar on Google Play Store
 PLAY_STORE_SEARCH_BAR = [
     {"role": "combobox", "name": "Search"},
-    {"role": "searchbox"},
+    {"role": "searchbox", "name": "Search"},
     {"css": "input[aria-label*='Search' i]"},
-    {"css": "input[type='text'][jsname]"},
     {"css": "input.google-play-search"},
-    {"xpath": "//input[@aria-label='Search' or contains(@placeholder, 'Search')]"}
+    {"css": "input[type='text'][jsname]"}
 ]
 
-# Search Submit / Trigger
 PLAY_STORE_SEARCH_BUTTON = [
     {"role": "button", "name": "Search"},
     {"css": "button[aria-label*='Search' i]"},
-    {"css": "button[jsname]"},
-    {"xpath": "//button[@aria-label='Search']"}
+    {"css": "button[jsname]"}
 ]
 
-# App Card Container & Elements in Results
 PLAY_STORE_APP_CARDS = [
     {"css": "div[jscontroller] a[href*='/store/apps/details']"},
     {"css": "div.VfPpkd-EScbFb-JIbuQc a"},

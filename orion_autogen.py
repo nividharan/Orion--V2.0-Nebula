@@ -623,8 +623,17 @@ class NebulaModel:
                             if act == "shot":
                                 shot = orion_core.take_screenshot()
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
-                                self.stream.print_success(f"Screen buffer saved to '{shot.get('saved_path')}'", elapsed)
-                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Image resolution {shot.get('size')} confirmed.")
+                                size_info = shot.get('size') or f"{shot.get('bytes_len', 0)} bytes"
+                                method_info = shot.get('method', 'perception')
+                                self.stream.print_success(f"Screen buffer saved to '{shot.get('saved_path')}' via {method_info}", elapsed)
+
+                                # Compact semantic accessibility snapshot
+                                aria_desc = orion_core.OrionSystem.web_aria_snapshot()
+                                if aria_desc:
+                                    first_line = aria_desc.splitlines()[0] if aria_desc.splitlines() else "DOM tree active"
+                                    self.stream.print_line("Perception Inspector", "🌲", f"Semantic Tree: {first_line} (+{len(aria_desc.splitlines())} nodes)")
+
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Frame buffer ({size_info}) confirmed.")
 
                             elif act == "listen":
                                 self.stream.print_line("Perception Inspector", "🎙️", "Listening to microphone for 4 seconds...")
