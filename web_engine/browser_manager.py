@@ -15,12 +15,37 @@ import time
 import random
 import logging
 import threading
+import json
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from playwright.sync_api import sync_playwright, Playwright, Browser, BrowserContext, Page, Response
 
 from .config import BrowserConfig, DEFAULT_CONFIG
 from .exceptions import WebEngineError, PageLoadTimeoutError, BotDetectionTriggeredError
+
+
+def atomic_write_json(target_path: Path, data: Any, indent: int = 2):
+    """
+    Writes data atomically via a temporary file and atomic replace (os.replace).
+    Prevents 0-byte or corrupted JSON files if a process crashes mid-write.
+    """
+    target_path = Path(target_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target_path.with_name(f".{target_path.name}.tmp_{int(time.time()*1000)}")
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=indent)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, target_path)
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+
 
 logger = logging.getLogger("Orion.WebEngine")
 if not logger.handlers:
@@ -103,13 +128,56 @@ class BrowserManager:
             self._last_retry_after = wait_time
             logger.warning(f"Rate limit / Bot challenge received (HTTP {response.status}). Retry-After: {wait_time}s")
 
+    def _verify_no_git_exposure(self):
+        """Security sanity check: verifies no sensitive .cache files are tracked in git."""
+        try:
+            res = subprocess.run(
+                ["git", "ls-files", ".cache"],
+                capture_output=True,
+                text=True,
+                cwd=str(self.config.base_dir),
+                timeout=2
+            )
+            tracked = res.stdout.strip()
+            if tracked:
+                logger.critical(
+                    f"CRITICAL SECURITY ALERT: The following sensitive files in .cache are TRACKED by git!\n{tracked}\n"
+                    f"Run immediately: git rm --cached -r .cache/"
+                )
+        except Exception:
+            pass
+
+    def cleanup_stale_artifacts(self, max_age_days: int = 7):
+        """
+        Prunes traces and screenshots older than max_age_days to avoid disk bloat.
+        Safe retention policy: never touches storage_state.json or site_memory.json.
+        """
+        now = time.time()
+        max_age_sec = max_age_days * 86400
+
+        for target_dir in (self.config.traces_dir, self.config.screenshots_dir):
+            if not target_dir.exists():
+                continue
+            for item in target_dir.glob("*"):
+                if item.is_file():
+                    try:
+                        if now - item.stat().st_mtime > max_age_sec:
+                            item.unlink()
+                            logger.debug(f"Pruned stale artifact: {item.name}")
+                    except Exception:
+                        pass
+
     def launch(self) -> Page:
         """Launches Google Chrome with minimal stealth, correct tracing, and rate listeners."""
         if self.is_running:
             return self._active_page
 
+        self._verify_no_git_exposure()
+        self.cleanup_stale_artifacts(max_age_days=7)
+
         logger.info("Initializing Playwright Web Engine substrate...")
         self._playwright = sync_playwright().start()
+
 
         args = [
             "--no-default-browser-check",
@@ -194,13 +262,22 @@ class BrowserManager:
         return self._active_page
 
     def save_session_state(self):
-        """Persists session state if running non-persistent context."""
+        """Persists session state atomically via temporary file and os.replace."""
         if not self.config.use_persistent_profile and self._context:
+            temp_path = self.config.storage_state_path.with_name(f".storage_state.tmp_{int(time.time()*1000)}.json")
             try:
-                self._context.storage_state(path=str(self.config.storage_state_path))
-                logger.info(f"Saved session state to '{self.config.storage_state_path}'.")
+                self._context.storage_state(path=str(temp_path))
+                os.replace(temp_path, self.config.storage_state_path)
+                logger.info(f"Saved session state atomically to '{self.config.storage_state_path}'.")
             except Exception as e:
                 logger.warning(f"Failed to save session state: {e}")
+            finally:
+                if temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except Exception:
+                        pass
+
 
     def capture_cdp_screenshot(self, target_path: Optional[str] = None, full_page: bool = False) -> dict:
         """

@@ -57,15 +57,50 @@ class BasePage:
         return {}
 
     def _save_site_memory(self, domain: str, target_name: str, working_selector: Dict[str, Any]):
-        """Saves known working selector to disk for instant future matching."""
+        """Saves known working selector to disk atomically with timestamps."""
         if domain not in self._site_memory:
             self._site_memory[domain] = {}
-        self._site_memory[domain][target_name] = working_selector
+        self._site_memory[domain][target_name] = {
+            "selector": working_selector,
+            "updated_at": time.time(),
+            "fail_count": 0
+        }
+        self._atomic_save_memory()
+
+    def _mark_site_memory_failure(self, domain: str, target_name: str):
+        """Drops or increments failure count on dead remembered selectors."""
+        if domain in self._site_memory and target_name in self._site_memory[domain]:
+            entry = self._site_memory[domain][target_name]
+            if isinstance(entry, dict) and "fail_count" in entry:
+                entry["fail_count"] += 1
+                if entry["fail_count"] >= 2:
+                    del self._site_memory[domain][target_name]
+                    logger.debug(f"Evicted stale selector for '{target_name}' on domain '{domain}'.")
+            else:
+                del self._site_memory[domain][target_name]
+            self._atomic_save_memory()
+
+    def _atomic_save_memory(self):
+        """Atomically persists site memory to disk, preventing truncated or 0-byte corrupt files on crash."""
+        mem_file = self.mgr.config.site_memory_path
+        mem_file.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = mem_file.with_name(f".{mem_file.name}.tmp_{int(time.time()*1000)}")
         try:
-            with open(self.mgr.config.site_memory_path, "w", encoding="utf-8") as f:
+            with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(self._site_memory, f, indent=2)
+                f.flush()
+                import os
+                os.fsync(f.fileno())
+            import os
+            os.replace(temp_file, mem_file)
         except Exception:
             pass
+        finally:
+            if temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except Exception:
+                    pass
 
     def get_domain(self) -> str:
         try:
@@ -124,15 +159,17 @@ class BasePage:
         tried = []
 
         # 1. Check site memory first
-        mem_sel = self._site_memory.get(domain, {}).get(target_name)
-        if mem_sel:
+        mem_entry = self._site_memory.get(domain, {}).get(target_name)
+        if mem_entry:
+            mem_sel = mem_entry.get("selector") if isinstance(mem_entry, dict) and "selector" in mem_entry else mem_entry
             try:
                 loc = self.resolve_locator(mem_sel, context=context)
                 loc.first.wait_for(state="visible", timeout=probe_timeout)
                 self._log_action("resolve_locator_memory", target_name, mem_sel, time.time() - t0, "success")
                 return loc.first
-            except Exception:
-                pass
+            except (PlaywrightTimeoutError, Exception):
+                self._mark_site_memory_failure(domain, target_name)
+
 
         # 2. Short-probe through fallback chain using wait_for (properly waits for SPA renders)
         matched_loc: Optional[Locator] = None

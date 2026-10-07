@@ -9,6 +9,10 @@ storage_state.json
 *.zip
 *.log
 *.html
+.env
+.env.*
+*.secret
+
 
 # Media (keep committed asset banners)
 *.png
