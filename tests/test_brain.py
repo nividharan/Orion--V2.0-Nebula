@@ -145,7 +145,8 @@ class TestStripFences(unittest.TestCase):
 class TestParseAIPlan(unittest.TestCase):
     def test_valid_media_play_parsed(self):
         d = _parse_ai_plan(_VALID_MEDIA_PLAY_RESPONSE)
-        self.assertEqual(d['intent'], 'media_play')
+        # _parse_ai_plan normalises "media_play" alias → canonical "media_playback"
+        self.assertEqual(d['intent'], 'media_playback')
         self.assertIn('play', [s['action'] for s in d['steps']])
         self.assertTrue(d['ai_used'])
 

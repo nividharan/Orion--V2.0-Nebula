@@ -57,16 +57,16 @@ class TestPlanValidation(unittest.TestCase):
             validate_plan({'intent': 'web_search', 'steps': []})
         self.assertIn('at least one step', str(ctx.exception).lower())
 
-    def test_eleven_steps_rejected(self):
-        steps = [_make_step(target='https://www.google.com')] * 11
+    def test_over_thirty_steps_rejected(self):
+        steps = [_make_step(target='https://www.google.com')] * 31
         with self.assertRaises(ValidationError) as ctx:
             validate_plan({'intent': 'web_search', 'steps': steps})
-        self.assertIn('10', str(ctx.exception))
+        self.assertIn('30', str(ctx.exception))
 
-    def test_exactly_ten_steps_accepted(self):
-        steps = [_make_step(target='https://www.google.com')] * 10
+    def test_exactly_thirty_steps_accepted(self):
+        steps = [_make_step(target='https://www.google.com')] * 30
         plan = validate_plan({'intent': 'web_search', 'steps': steps})
-        self.assertEqual(len(plan.steps), 10)
+        self.assertEqual(len(plan.steps), 30)
 
     def test_confidence_out_of_range_rejected(self):
         with self.assertRaises(ValidationError):
@@ -76,9 +76,30 @@ class TestPlanValidation(unittest.TestCase):
         plan = validate_plan(_minimal_plan(intent='unknown'))
         self.assertEqual(plan.intent, IntentType.UNKNOWN)
 
+    def test_all_phase3_intents_accepted(self):
+        for intent_name in (
+            'media_playback', 'web_search', 'web_task',
+            'desktop_app', 'file_op', 'system_control', 'tab_management'
+        ):
+            plan = validate_plan(_minimal_plan(intent=intent_name))
+            self.assertEqual(plan.intent.value, intent_name)
+
     def test_invalid_intent_rejected(self):
         with self.assertRaises(ValidationError):
             validate_plan(_minimal_plan(intent='fly_to_moon'))
+
+    def test_task_model_validation(self):
+        from schemas import Task
+        t = Task(
+            goal="Book train ticket",
+            params={"from": "NYC", "to": "BOS"},
+            allowed_domains=["amtrak.com"],
+            limits={"max_steps": 10, "max_cost": 0.0},
+            success_criteria=["Booking confirmed"],
+            requires_approval_for=["payment"]
+        )
+        self.assertEqual(t.goal, "Book train ticket")
+        self.assertIn("amtrak.com", t.allowed_domains)
 
 
 # ---------------------------------------------------------------------------

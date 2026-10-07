@@ -17,10 +17,11 @@ local_parse    — rule-based parser for common commands (no AI required)
 
 from __future__ import annotations
 
+import time
 import re
 import urllib.parse
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -50,26 +51,60 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset({
 # Actions that require explicit user approval before execution
 SENSITIVE_ACTIONS: frozenset[str] = frozenset({
     'submit_payment', 'delete_account', 'place_order',
-    'send_message', 'download_file',
+    'send_message', 'download_file', 'pay', 'checkout', 'delete',
 })
 
 
 # ---------------------------------------------------------------------------
-# Enums
+# Enums and Literals
 # ---------------------------------------------------------------------------
 
+IntentLiteral = Literal[
+    'media_playback',
+    'web_search',
+    'web_task',
+    'desktop_app',
+    'file_op',
+    'system_control',
+    'tab_management',
+]
+
 class IntentType(str, Enum):
-    MEDIA_PLAY    = 'media_play'
-    WEB_SEARCH    = 'web_search'
-    TAB_OPERATION = 'tab_operation'
-    DESKTOP_APP   = 'desktop_app'
-    VOICE         = 'voice'
-    UNKNOWN       = 'unknown'
+    MEDIA_PLAYBACK = 'media_playback'
+    WEB_SEARCH     = 'web_search'
+    WEB_TASK       = 'web_task'
+    DESKTOP_APP    = 'desktop_app'
+    FILE_OP        = 'file_op'
+    SYSTEM_CONTROL = 'system_control'
+    TAB_MANAGEMENT = 'tab_management'
+
+    # Aliases for backwards compatibility
+    MEDIA_PLAY     = 'media_playback'
+    TAB_OPERATION  = 'tab_management'
+    VOICE          = 'system_control'
+    UNKNOWN        = 'unknown'
 
 
 class ActionType(str, Enum):
+    # Web & Navigation primitives
     BROWSE         = 'browse'
     SEARCH         = 'search'
+    NAVIGATE       = 'navigate'
+    CLICK          = 'click'
+    FILL           = 'fill'
+    SELECT_OPTION  = 'select_option'
+    CHECK          = 'check'
+    UPLOAD_FILE    = 'upload_file'
+    DOWNLOAD_FILE  = 'download_file'
+    SWITCH_TAB     = 'switch_tab'
+    WAIT_FOR       = 'wait_for'
+    EXTRACT_TABLE  = 'extract_table'
+    PAGINATE       = 'paginate'
+    SCROLL         = 'scroll'
+    EXTRACT        = 'extract'
+    ARIA_SNAPSHOT  = 'aria_snapshot'
+
+    # Media & App controls
     PLAY           = 'play'
     OPEN_APP       = 'open_app'
     CLOSE          = 'close'
@@ -94,16 +129,22 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(a.value for a in ActionType)
 # ---------------------------------------------------------------------------
 
 class Step(BaseModel):
-    """A single atomic execution milestone."""
+    """A single atomic execution milestone with risk classification and fallback policy."""
 
+    id: str = Field(default_factory=lambda: f"step_{int(time.time()*1000)}")
     action: ActionType
     agent: str = Field(default='Chrome Executor', min_length=1)
-    target: Optional[str] = None     # URL, app name, or text, never a raw credential
+    target: Optional[str] = None     # URL, selector ref, app name, never credentials
+    params: Dict[str, Any] = Field(default_factory=dict)
+    expect: Optional[str] = None     # postcondition verification
+    risk: Literal['low', 'medium', 'high'] = 'low'
+    on_fail: Literal['retry', 'skip', 'recover', 'abort'] = 'retry'
+
     query: Optional[str] = None      # Clean search/song query (no boilerplate)
     portal: Optional[str] = None
     play: bool = False
     desc: str = Field(default='', min_length=0)
-    requires_approval: bool = False  # set True for SENSITIVE_ACTIONS
+    requires_approval: bool = False  # set True for high-risk and sensitive actions
 
     @field_validator('target')
     @classmethod
@@ -134,6 +175,12 @@ class Step(BaseModel):
             raise ValueError('query must not contain credential-like content')
         return v
 
+    @model_validator(mode='after')
+    def enforce_risk_and_approval(self) -> Step:
+        if self.risk == 'high' or self.action.value in SENSITIVE_ACTIONS:
+            self.requires_approval = True
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Plan model
@@ -145,13 +192,15 @@ class Plan(BaseModel):
     intent: IntentType = IntentType.UNKNOWN
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     steps: List[Step] = Field(default_factory=list)
+    parsed_from: Optional[str] = None
+    clarification_needed: Optional[str] = None
     ai_used: bool = False         # True if Gemini produced this plan
 
     @field_validator('steps')
     @classmethod
-    def max_ten_steps(cls, v: list) -> list:
-        if len(v) > 10:
-            raise ValueError(f'Plan exceeds 10-step limit ({len(v)} steps given)')
+    def max_thirty_steps(cls, v: list) -> list:
+        if len(v) > 30:
+            raise ValueError(f'Plan exceeds 30-step limit ({len(v)} steps given)')
         if len(v) == 0:
             raise ValueError('Plan must contain at least one step')
         return v
@@ -159,9 +208,24 @@ class Plan(BaseModel):
     @model_validator(mode='after')
     def flag_sensitive_steps(self) -> Plan:
         for step in self.steps:
-            if step.action.value in SENSITIVE_ACTIONS:
+            if step.action.value in SENSITIVE_ACTIONS or step.risk == 'high':
                 step.requires_approval = True
         return self
+
+
+# ---------------------------------------------------------------------------
+# Task model
+# ---------------------------------------------------------------------------
+
+class Task(BaseModel):
+    """Structured high-level task specification with guardrails and limits."""
+
+    goal: str
+    params: Dict[str, Any] = Field(default_factory=dict)
+    allowed_domains: List[str] = Field(default_factory=list)
+    limits: Dict[str, Any] = Field(default_factory=dict)
+    success_criteria: List[str] = Field(default_factory=list)
+    requires_approval_for: List[str] = Field(default_factory=list)
 
 
 def validate_plan(raw: dict) -> Plan:

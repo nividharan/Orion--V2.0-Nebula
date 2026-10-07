@@ -258,11 +258,29 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
+
+# Map legacy/alias intent strings AI might return → canonical IntentType values.
+_INTENT_ALIASES: dict[str, str] = {
+    "media_play":    "media_playback",
+    "tab_operation": "tab_management",
+    "voice":         "system_control",
+    # identity mappings (no-ops, listed for readability)
+    "media_playback": "media_playback",
+    "web_search":     "web_search",
+    "web_task":       "web_task",
+    "desktop_app":    "desktop_app",
+    "file_op":        "file_op",
+    "system_control": "system_control",
+}
+
+
 def _parse_ai_plan(raw_text: str) -> dict:
     """Parse Gemini plan response into a raw dict for validate_plan()."""
     data = json.loads(_strip_fences(raw_text))
 
-    intent   = data.get("intent", "unknown")
+    raw_intent = data.get("intent", "unknown")
+    # Normalise AI alias → canonical IntentType value (prevents silent UNKNOWN fallback)
+    intent   = _INTENT_ALIASES.get(raw_intent, raw_intent)
     query    = data.get("clean_query", "")
     ai_steps = data.get("steps", [])
     conf     = float(data.get("confidence", 0.7))
@@ -288,7 +306,7 @@ def _parse_ai_plan(raw_text: str) -> dict:
             step_dict["target"] = speech
         if act_str in ("play", "browse", "search"):
             step_dict["query"]  = query
-            step_dict["portal"] = "youtube" if intent == "media_play" else None
+            step_dict["portal"] = "youtube" if intent == "media_playback" else None
             step_dict["play"]   = (act_str == "play")
 
         built_steps.append(step_dict)
