@@ -37,6 +37,7 @@ from typing import TypedDict, Optional
 # ---------------------------------------------------------------------------
 
 class Candidate(TypedDict):
+    i: int
     index: int
     video_id: str
     title: str
@@ -112,8 +113,18 @@ def _extract_candidates_from_data(data: dict) -> list[Candidate]:
     for section in sections:
         items = section.get('itemSectionRenderer', {}).get('contents', [])
         for item in items:
+            # Filter ads, sponsored items, and promoted banners
+            if any(k in item for k in ('adSlotRenderer', 'promotedSparklesWebRenderer', 'compactPromotedItemRenderer', 'inFeedAdLayoutRenderer')):
+                continue
+
             vr = item.get('videoRenderer')
             if not vr:
+                continue
+
+            # Check badges for ad / sponsored tags
+            badges = vr.get('badges', [])
+            badges_str = json.dumps(badges).upper()
+            if any(ad_kw in badges_str for ad_kw in ('"AD"', '"SPONSORED"', '"PROMOTED"')):
                 continue
 
             video_id: str = vr.get('videoId', '')
@@ -129,14 +140,15 @@ def _extract_candidates_from_data(data: dict) -> list[Candidate]:
             duration_str: str = vr.get('lengthText', {}).get('simpleText', '')
 
             # Live-stream detection: no duration or explicit badge
-            badges = vr.get('badges', [])
             is_live = (
                 not duration_str or
-                any('LIVE' in json.dumps(b).upper() for b in badges)
+                'LIVE' in badges_str
             )
 
+            idx = len(raw)
             raw.append({
-                'index':      len(raw),
+                'i':          idx,
+                'index':      idx,
                 'video_id':   video_id,
                 'title':      title,
                 'channel':    channel,
@@ -222,7 +234,7 @@ _PENALTY_KEYWORDS = frozenset({
 
 
 def _score(query_normalized: str, candidates: list[Candidate]) -> list[Candidate]:
-    """Score each candidate by token overlap against the normalized query."""
+    """Score each candidate by token overlap against normalized query, channel match, and duration."""
     q_tokens = set(re.findall(r'[a-zA-Z0-9\u0B80-\u0BFF]+', query_normalized.lower()))
 
     for c in candidates:
@@ -231,6 +243,16 @@ def _score(query_normalized: str, candidates: list[Candidate]) -> list[Candidate
 
         overlap = len(q_tokens & title_tokens)
         score = float(overlap)
+
+        # Channel match bonus
+        channel_tokens = set(re.findall(r'[a-zA-Z0-9\u0B80-\u0BFF]+', c.get('channel', '').lower()))
+        if q_tokens & channel_tokens:
+            score += 1.0
+
+        # Duration range bonus (typical track length: 2m to 6m)
+        dur = c.get('duration_s', 0)
+        if 120 <= dur <= 360:
+            score += 0.5
 
         for kw in _BOOST_KEYWORDS:
             if kw in title_lower:
@@ -244,6 +266,7 @@ def _score(query_normalized: str, candidates: list[Candidate]) -> list[Candidate
 
     candidates.sort(key=lambda c: c['score'], reverse=True)
     for i, c in enumerate(candidates):
+        c['i'] = i
         c['index'] = i
 
     return candidates
@@ -255,7 +278,7 @@ def _score(query_normalized: str, candidates: list[Candidate]) -> list[Candidate
 
 class _TTLCache:
     def __init__(self, ttl_seconds: int = 600):
-        self._store: dict[str, tuple[float, list[Candidate]]] = {}
+        self._store: dict[str, tuple[float, Any]] = {}
         self._ttl = ttl_seconds
 
     def get(self, key: str) -> Optional[list[Candidate]]:
@@ -267,11 +290,68 @@ class _TTLCache:
     def set(self, key: str, value: list[Candidate]) -> None:
         self._store[key] = (time.time(), value)
 
+    def get_chosen(self, key: str) -> Optional[str]:
+        entry = self._store.get(f"__chosen__{key}")
+        if entry and time.time() - entry[0] < self._ttl:
+            return entry[1]
+        return None
+
+    def set_chosen(self, key: str, video_id: str) -> None:
+        self._store[f"__chosen__{key}"] = (time.time(), video_id)
+
     def clear(self) -> None:
         self._store.clear()
 
 
 _cache = _TTLCache(ttl_seconds=600)
+
+
+def cache_chosen_video_id(query: str, video_id: str) -> None:
+    """Caches normalized query -> chosen video_id with TTL."""
+    norm_q = normalize_query(query)
+    _cache.set_chosen(norm_q, video_id)
+
+
+def get_cached_video_id(query: str) -> Optional[str]:
+    """Retrieves cached chosen video_id for query if unexpired."""
+    norm_q = normalize_query(query)
+    return _cache.get_chosen(norm_q)
+
+
+# ---------------------------------------------------------------------------
+# YouTube Data API v3 Optional Resolver
+# ---------------------------------------------------------------------------
+
+def search_via_api(query: str, api_key: str, max_results: int = 10) -> list[Candidate]:
+    """Fetches search candidates via official YouTube Data API v3 when key is provided."""
+    import os
+    encoded = urllib.parse.quote_plus(query)
+    url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults={max_results}&q={encoded}&key={api_key}"
+    req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+    with urllib.request.urlopen(req, timeout=6) as response:
+        payload = json.loads(response.read().decode('utf-8'))
+
+    items = payload.get('items', [])
+    candidates: list[Candidate] = []
+    for item in items:
+        vid = item.get('id', {}).get('videoId', '')
+        if not vid:
+            continue
+        snippet = item.get('snippet', {})
+        idx = len(candidates)
+        candidates.append({
+            'i': idx,
+            'index': idx,
+            'video_id': vid,
+            'title': snippet.get('title', ''),
+            'channel': snippet.get('channelTitle', ''),
+            'duration': '',
+            'duration_s': 0,
+            'is_live': snippet.get('liveBroadcastContent', '') == 'live',
+            'score': 0.0,
+            'url': f'https://www.youtube.com/watch?v={vid}',
+        })
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -289,15 +369,9 @@ def search(query: str, max_results: int = 10, allow_live: bool = False) -> list[
     """
     Search YouTube and return up to max_results scored, filtered candidates.
     Results are cached for 10 minutes per normalized query.
-
-    Args:
-        query:       Raw user query (typos allowed).
-        max_results: Maximum candidates to return (default 10).
-        allow_live:  If True, include live streams.
-
-    Returns:
-        Sorted list of Candidate dicts, best match first.
+    Uses YouTube Data API v3 if YOUTUBE_API_KEY is present, else parses embedded ytInitialData.
     """
+    import os
     norm_q = normalize_query(query)
     cache_key = f'{norm_q}|live={allow_live}'
 
@@ -305,22 +379,32 @@ def search(query: str, max_results: int = 10, allow_live: bool = False) -> list[
     if cached is not None:
         return cached[:max_results]
 
-    encoded = urllib.parse.quote_plus(norm_q)
-    url = f'https://www.youtube.com/results?search_query={encoded}'
+    raw: list[Candidate] = []
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    if api_key:
+        try:
+            raw = search_via_api(norm_q, api_key, max_results=max_results)
+        except Exception:
+            raw = []
 
-    req = urllib.request.Request(
-        url,
-        headers={
-            'User-Agent': _USER_AGENT,
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
-    )
-    try:
-        html = urllib.request.urlopen(req, timeout=8).read().decode('utf-8', errors='ignore')
-    except Exception as exc:
-        raise RuntimeError(f'YouTube search request failed: {exc}') from exc
+    if not raw:
+        encoded = urllib.parse.quote_plus(norm_q)
+        url = f'https://www.youtube.com/results?search_query={encoded}'
 
-    raw = _extract_from_html(html)
+        req = urllib.request.Request(
+            url,
+            headers={
+                'User-Agent': _USER_AGENT,
+                'Accept-Language': 'en-US,en;q=0.9',
+            }
+        )
+        try:
+            html = urllib.request.urlopen(req, timeout=8).read().decode('utf-8', errors='ignore')
+        except Exception as exc:
+            raise RuntimeError(f'YouTube search request failed: {exc}') from exc
+
+        raw = _extract_from_html(html)
+
     filtered = _filter(raw, allow_live=allow_live)
     scored = _score(norm_q, filtered)
 

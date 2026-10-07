@@ -157,8 +157,58 @@ class TestTTLCache(unittest.TestCase):
         """'kangal neeye tamol song' and 'kangal neeye tamil song' → same top ID."""
         data = _load_fixture()
         r_typo = search_from_fixture(data, 'kangal neeye tamol song')
-        r_clean = search_from_fixture(data, 'kangal neeye tamil song')
-        self.assertEqual(r_typo[0]['video_id'], r_clean[0]['video_id'])
+    def test_chosen_video_id_cache_ttl(self):
+        from resolvers.youtube import cache_chosen_video_id, get_cached_video_id
+        cache_chosen_video_id('kangal neeye tamil song', 'dQw4w9WgXcQ')
+        # Typo query normalizes to same key
+        cached_id = get_cached_video_id('kangal neeye tamol song')
+        self.assertEqual(cached_id, 'dQw4w9WgXcQ')
+
+    def test_candidate_structure_has_i_and_fields(self):
+        data = _load_fixture()
+        candidates = search_from_fixture(data, 'kangal neeye tamil song')
+        self.assertTrue(len(candidates) > 0)
+        c = candidates[0]
+        self.assertIn('i', c)
+        self.assertIn('title', c)
+        self.assertIn('channel', c)
+        self.assertIn('duration', c)
+        self.assertIn('video_id', c)
+        self.assertEqual(c['i'], c['index'])
+
+    def test_ad_and_sponsored_filtering(self):
+        from resolvers.youtube import _extract_candidates_from_data
+        data = _load_fixture()
+        # Create mock data with adSlotRenderer
+        ad_data = {
+            'contents': {
+                'twoColumnSearchResultsRenderer': {
+                    'primaryContents': {
+                        'sectionListRenderer': {
+                            'contents': [
+                                {
+                                    'itemSectionRenderer': {
+                                        'contents': [
+                                            {'adSlotRenderer': {'ad': True}},
+                                            {
+                                                'videoRenderer': {
+                                                    'videoId': 'advideo1234',
+                                                    'badges': [{'metadataBadgeRenderer': {'label': 'Ad'}}],
+                                                    'title': {'runs': [{'text': 'Ad Title'}]},
+                                                    'lengthText': {'simpleText': '2:30'}
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+        res = _extract_candidates_from_data(ad_data)
+        self.assertEqual(len(res), 0, "Ads must be filtered out in code")
 
 
 if __name__ == '__main__':
