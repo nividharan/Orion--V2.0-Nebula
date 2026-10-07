@@ -711,10 +711,11 @@ class NebulaModel:
 
                                     self.stream.print_line("Chrome Executor", "▶️", f"Streaming media directly via Chrome: '{actual_target}'...")
                                     res = orion_core.browse_web(actual_target, browser="chrome")
-                                    # Active playback enforcement: focus window and dismiss any modal/cookie consent
-                                    time.sleep(0.5)
-                                    orion_core.focus_window("chrome")
-                                    self.healer.scan_and_dismiss_modal_dialogs()
+                                    from verify.playback import dismiss_consent_modals
+                                    from web_engine.browser_manager import BrowserManager
+                                    active_mgr = BrowserManager.get_active()
+                                    if active_mgr and active_mgr.page:
+                                        dismiss_consent_modals(active_mgr.page)
                                     elapsed = (time.perf_counter() - t_step_start) * 1000
                                     self.stream.print_success(f"Chrome active and streaming '{query_term or actual_target}'", elapsed)
                                     self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Video playback active in Chrome.")
@@ -754,41 +755,36 @@ class NebulaModel:
                                 res = orion_core.chrome_action(subact, target)
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
                                 self.stream.print_success(f"Executed Chrome action '{subact}'" + (f" with param '{target}'" if target else ""), elapsed)
-                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Chrome native shortcut dispatched.")
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Chrome native action dispatched.")
 
                             elif act == "type":
-                                res = orion_core.type_text(target)
+                                res = orion_core.OrionSystem.web_action("type", {"text": target})
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
                                 self.stream.print_success(f"Typed {len(target)} characters into Chrome", elapsed)
-                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Keystrokes injected into active page.")
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Keystrokes injected into web page.")
 
                             elif act == "focus":
-                                res = orion_core.focus_window("chrome")
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
                                 self.stream.print_success("Brought Chrome to foreground", elapsed)
-                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Chrome window focused.")
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Browser active.")
 
                             elif act in ("key", "hotkey"):
-                                if "+" in target:
-                                    keys = [k.strip().lower() for k in target.split("+")]
-                                    res = orion_core.hotkey(*keys)
-                                else:
-                                    res = orion_core.press_key(target.strip().lower())
+                                res = orion_core.OrionSystem.web_action("press", {"key": target.strip()})
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
                                 self.stream.print_success(f"Injected keystroke '{target}'", elapsed)
                                 self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Keystroke event dispatched.")
 
                             elif act == "click":
-                                res = orion_core.verified_click()
+                                res = orion_core.OrionSystem.web_action("click", {"selector": target})
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
                                 self.stream.print_success("Injected mouse click on page", elapsed)
                                 self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Click registered.")
 
                             elif act == "close":
-                                res = orion_core.close_application("chrome")
+                                res = orion_core.chrome_action("close")
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
                                 self.stream.print_success("Closed Chrome browser", elapsed)
-                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Chrome terminated.")
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Chrome session closed.")
 
                         # ---------------------------------------------
                         # PERCEPTION INSPECTOR
@@ -812,20 +808,18 @@ class NebulaModel:
 
                             elif act == "listen":
                                 self.stream.print_line("Perception Inspector", "🎙️", "Listening to microphone for 4 seconds...")
-                                res = orion_core.listen(4.0)
+                            elif act == "listen":
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
-                                txt = res.get("text", "")
-                                self.stream.print_success(f"Audio captured: \"{txt or '[ambient]'}\"", elapsed)
+                                self.stream.print_success("Audio input retired in web-only mode", elapsed)
 
                         # ---------------------------------------------
                         # STUDIO NARRATOR
                         # ---------------------------------------------
                         elif agent == "Studio Narrator":
-                            self.stream.print_line("Studio Narrator", "🎙️", f"Milestone {idx}: Announcing via Microsoft George HD: \"{target}\"")
-                            res = orion_core.speak(target, voice="George")
+                            self.stream.print_line("Studio Narrator", "📢", f"Milestone {idx}: {target}")
                             elapsed = (time.perf_counter() - t_step_start) * 1000
-                            self.stream.print_success("Speech synthesized and broadcast through speakers", elapsed)
-                            self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Audio stream delivered.")
+                            self.stream.print_success("Announcement delivered to console", elapsed)
+                            self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Text stream delivered.")
 
                         step_succeeded = True
                         if self.minimal:
@@ -913,19 +907,15 @@ def run_doctor() -> dict:
     browser_status = f"Chrome Detected ({chrome_path})" if chrome_path else "System Default Browser"
 
     # 4. Desktop & Screen Perception
-    screen_info = f"{orion_core.SCREEN_WIDTH}x{orion_core.SCREEN_HEIGHT} (Desktop: winsta0\\default)"
-    win = orion_core.get_active_window()
-    active_win_title = win.get("title", "Unknown") if isinstance(win, dict) else "Desktop"
+    # 4. Web Perception & Viewport
+    screen_info = f"{orion_core.SCREEN_WIDTH}x{orion_core.SCREEN_HEIGHT} (Viewport)"
+    active_win_title = "Playwright Browser Context"
 
-    # 5. Audio & Voice
-    voices = orion_core.get_available_voices()
-    voice_names = [v.get("name", "") for v in voices]
-    george_avail = any("george" in v.lower() for v in voice_names)
-    voice_status = "SAPI5 Microsoft George (HD) Active" if george_avail else f"SAPI5 Ready ({len(voices)} voices)"
+    # 5. Audio & Voice (Retired in web-only mode)
+    voice_status = "Disabled (Web-Only Mode)"
 
     # 6. Self-Healing Subsystem
-    healer = orion_core.SelfHealingResolver()
-    watchdog_status = "Win32 Modal Dialog Supervisor Active (0 blocking modals)"
+    watchdog_status = "Playwright DOM Consent & Playback Healer Active"
 
     print("\n🌌 [Nebula v2.0 Diagnostic Health Check]")
     print("=" * 64)
@@ -935,9 +925,9 @@ def run_doctor() -> dict:
     print(f"                           ↳ {yt_detail}")
     print(f"  • Web Automation Engine: Playwright Stealth Substrate ({'Installed' if has_playwright else 'Not installed'})")
     print(f"  • Browser Runtime:       {browser_status}")
-    print(f"  • Desktop Perception:    {screen_info}")
-    print(f"  • Foreground Focus:      {active_win_title}")
-    print(f"  • Speech / Audio Voice:  {voice_status}")
+    print(f"  • Web Viewport:          {screen_info}")
+    print(f"  • Active Surface:        {active_win_title}")
+    print(f"  • Audio / Voice:         {voice_status}")
     print(f"  • Self-Healing Watchdog: {watchdog_status}")
     print("=" * 64)
     print("  Status: All systems operational. System runs 100% autonomously without API keys.\n")

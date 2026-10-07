@@ -16,12 +16,12 @@ import random
 import logging
 import threading
 import json
-import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable, List
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, Playwright, Browser, BrowserContext, Page, Response
 
+from config import check_git_tracked_cache
 from . import config as web_config
 from .config import BrowserConfig, DEFAULT_CONFIG, is_global_kill_switch_active
 from .exceptions import WebEngineError, PageLoadTimeoutError, BotDetectionTriggeredError, ActionNotAllowedError
@@ -169,19 +169,7 @@ class BrowserManager:
     def _verify_no_git_exposure(self):
         """Security sanity check: verifies no sensitive .cache files are tracked in git."""
         try:
-            res = subprocess.run(
-                ["git", "ls-files", ".cache"],
-                capture_output=True,
-                text=True,
-                cwd=str(self.config.base_dir),
-                timeout=2
-            )
-            tracked = res.stdout.strip()
-            if tracked:
-                logger.critical(
-                    f"CRITICAL SECURITY ALERT: The following sensitive files in .cache are TRACKED by git!\n{tracked}\n"
-                    f"Run immediately: git rm --cached -r .cache/"
-                )
+            check_git_tracked_cache(self.config.base_dir)
         except Exception:
             pass
 
@@ -321,8 +309,9 @@ class BrowserManager:
 
     def take_screenshot(self, target_path: Optional[str] = None, full_page: bool = False) -> dict:
         """
-        Captures screenshot with automatic fallback to Win32 capture if page is closed or dead.
+        Captures screenshot via Playwright CDP only.
         Ensures page is brought to front before capture to prevent blank renders.
+        Returns {"ok": False, "error": "no_active_page"} if no active page is open.
         """
         save_dest = Path(target_path) if target_path else self.config.cache_dir / "screen_live.png"
         save_dest.parent.mkdir(parents=True, exist_ok=True)
@@ -340,6 +329,7 @@ class BrowserManager:
                     timeout=5000
                 )
                 return {
+                    "ok": True,
                     "status": "success",
                     "success": True,
                     "saved_path": str(save_dest),
@@ -350,42 +340,20 @@ class BrowserManager:
                     "title": self._active_page.title()
                 }
             except Exception as e:
-                logger.warning(f"CDP screenshot capture failed ({e}); falling back to Win32 screen capture...")
-
-        # Fallback to Win32 desktop capture
-        try:
-            from PIL import ImageGrab
-            img = ImageGrab.grab()
-            img.save(str(save_dest))
-            return {
-                "status": "success",
-                "success": True,
-                "saved_path": str(save_dest),
-                "method": "win32_fallback",
-                "timestamp": time.time(),
-                "note": "Captured via Win32 fallback"
-            }
-        except Exception as e_grab:
-            # Fallback to desktop-station diagnostic frame when display station is headless or locked
-            try:
-                from PIL import Image, ImageDraw
-                img = Image.new("RGB", (self.config.viewport_width, self.config.viewport_height), color=(25, 28, 36))
-                draw = ImageDraw.Draw(img)
-                draw.text((40, 40), f"[Orion Win32 Fallback] Station headless or page dead - {time.ctime()}", fill=(220, 220, 220))
-                img.save(str(save_dest))
+                logger.warning(f"Playwright CDP screenshot capture failed: {e}")
                 return {
-                    "status": "success",
-                    "success": True,
-                    "saved_path": str(save_dest),
-                    "method": "win32_fallback",
-                    "timestamp": time.time(),
-                    "note": f"Captured via Win32 fallback (headless station: {e_grab})"
-                }
-            except Exception as e:
-                return {
+                    "ok": False,
+                    "error": "no_active_page",
                     "status": "error",
-                    "message": f"Both CDP and Win32 screenshot capture failed: {e}"
+                    "message": f"Playwright CDP screenshot capture failed: {e}"
                 }
+
+        return {
+            "ok": False,
+            "error": "no_active_page",
+            "status": "error",
+            "message": "No active Playwright page open (Win32 fallback removed in web-only mode)"
+        }
 
     def capture_cdp_screenshot(self, target_path: Optional[str] = None, full_page: bool = False) -> dict:
         """Alias for take_screenshot."""

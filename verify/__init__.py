@@ -1,5 +1,5 @@
 """
-verify/ package — Perception, DOM playback verification, and self-healing.
+verify/ package — Web perception, DOM playback verification, and self-healing.
 """
 
 from .playback import (

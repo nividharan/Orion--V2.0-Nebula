@@ -214,9 +214,8 @@ class TestWebEngineSmoke(unittest.TestCase):
 
         try:
             res = self.mgr.take_screenshot()
-            self.assertEqual(res.get("status"), "success")
-            self.assertEqual(res.get("method"), "win32_fallback")
-            self.assertTrue(os.path.exists(res.get("saved_path")))
+            self.assertEqual(res.get("ok"), False)
+            self.assertEqual(res.get("error"), "no_active_page")
         finally:
             self.mgr._active_page = old_active
 
