@@ -269,7 +269,7 @@ def _rule(pattern: str):
 
 
 # Rule 1: direct play on YouTube
-@_rule(r'^(?:play|listen to|start)\s+(.+?)(?:\s+on\s+youtube)?$')
+@_rule(r'^(?:play|listen to|start|watch|stream)\s+(.+?)(?:\s+on\s+youtube)?$')
 def _r_play(m: re.Match) -> dict:
     query = m.group(1).strip()
     return {
@@ -282,9 +282,111 @@ def _r_play(m: re.Match) -> dict:
              'desc': f"Play '{query}' on YouTube"},
             {'action': ActionType.SCREENSHOT, 'agent': 'Perception Inspector',
              'desc': 'Verify video playback'},
-            {'action': ActionType.SPEAK, 'agent': 'Studio Narrator',
-             'target': f"Now playing {query} on YouTube, sir.",
-             'desc': 'Announce playback'},
+        ]
+    }
+
+
+# Rule 1b: direct search on portal
+@_rule(r'^(?:search|look up|find)\s+(?:for\s+)?(.+?)(?:\s+on\s+(google|youtube|github|wikipedia|reddit|amazon|google play))?$')
+def _r_search(m: re.Match) -> dict:
+    query = m.group(1).strip()
+    portal = (m.group(2) or 'google').strip().lower()
+    url = _portal_url(portal, query)
+    return {
+        'intent': IntentType.WEB_SEARCH,
+        'confidence': 0.95,
+        'steps': [
+            {'action': ActionType.BROWSE, 'agent': 'Chrome Executor',
+             'target': url, 'portal': portal, 'query': query,
+             'desc': f"Search '{query}' on {portal.title()}"},
+            {'action': ActionType.SCREENSHOT, 'agent': 'Perception Inspector',
+             'desc': 'Verify search results'},
+        ]
+    }
+
+
+# Rule 1c: google <query>
+@_rule(r'^google\s+(.+)$')
+def _r_google(m: re.Match) -> dict:
+    query = m.group(1).strip()
+    url = _portal_url('google', query)
+    return {
+        'intent': IntentType.WEB_SEARCH,
+        'confidence': 0.95,
+        'steps': [
+            {'action': ActionType.BROWSE, 'agent': 'Chrome Executor',
+             'target': url, 'portal': 'google', 'query': query,
+             'desc': f"Google '{query}'"},
+            {'action': ActionType.SCREENSHOT, 'agent': 'Perception Inspector',
+             'desc': 'Verify search results'},
+        ]
+    }
+
+
+# Rule 1d: sensitive actions (orders, payments, account deletion)
+@_rule(r'^place\s+order(?:\s+(?:for\s+)?(.+))?$')
+def _r_place_order(m: re.Match) -> dict:
+    item = (m.group(1) or 'item').strip()
+    return {
+        'intent': IntentType.WEB_TASK,
+        'confidence': 0.90,
+        'steps': [
+            {'action': ActionType.CLICK, 'agent': 'Chrome Executor',
+             'target': 'place_order', 'risk': 'high',
+             'desc': f"Place order for {item}"}
+        ]
+    }
+
+
+@_rule(r'^delete\s+(?:my\s+)?(?:account|records|all\s+saved\s+records)(?:\s+(.+))?$')
+def _r_delete_account(_m: re.Match) -> dict:
+    return {
+        'intent': IntentType.WEB_TASK,
+        'confidence': 0.90,
+        'steps': [
+            {'action': ActionType.CLICK, 'agent': 'Chrome Executor',
+             'target': 'delete_account', 'risk': 'high',
+             'desc': "Delete account"}
+        ]
+    }
+
+
+@_rule(r'^(?:submit\s+)?pay(?:ment)?(?:\s+(?:of\s+)?(.+))?$')
+def _r_payment(m: re.Match) -> dict:
+    amt = (m.group(1) or 'bill').strip()
+    return {
+        'intent': IntentType.WEB_TASK,
+        'confidence': 0.90,
+        'steps': [
+            {'action': ActionType.CLICK, 'agent': 'Chrome Executor',
+             'target': 'submit_payment', 'risk': 'high',
+             'desc': f"Pay {amt}"}
+        ]
+    }
+
+
+@_rule(r'^checkout(?:\s+(.+))?$')
+def _r_checkout(_m: re.Match) -> dict:
+    return {
+        'intent': IntentType.WEB_TASK,
+        'confidence': 0.90,
+        'steps': [
+            {'action': ActionType.CLICK, 'agent': 'Chrome Executor',
+             'target': 'checkout', 'risk': 'high',
+             'desc': "Checkout"}
+        ]
+    }
+
+
+@_rule(r'^send\s+message(?:\s+(.+))?$')
+def _r_send_message(_m: re.Match) -> dict:
+    return {
+        'intent': IntentType.WEB_TASK,
+        'confidence': 0.90,
+        'steps': [
+            {'action': ActionType.CLICK, 'agent': 'Chrome Executor',
+             'target': 'send_message', 'risk': 'high',
+             'desc': "Send message"}
         ]
     }
 
@@ -335,7 +437,7 @@ def _r_new_tab(m: re.Match) -> dict:
 
 
 # Rule 4: close tab / close chrome
-@_rule(r'^close\s+(tab|chrome|browser)$')
+@_rule(r'^close\s+(?:current\s+|this\s+|the\s+)?(tab|chrome|browser)$')
 def _r_close(m: re.Match) -> dict:
     what = m.group(1).lower()
     action = ActionType.CLOSE_TAB if what == 'tab' else ActionType.CLOSE
@@ -351,7 +453,7 @@ def _r_close(m: re.Match) -> dict:
 
 
 # Rule 5: next / previous / switch tab
-@_rule(r'^(?:next|switch)\s+tab$')
+@_rule(r'^(?:switch\s+to\s+|go\s+to\s+)?(?:the\s+)?next\s+tab$')
 def _r_next_tab(_m: re.Match) -> dict:
     return {
         'intent': IntentType.TAB_OPERATION,
@@ -360,12 +462,21 @@ def _r_next_tab(_m: re.Match) -> dict:
     }
 
 
-@_rule(r'^(?:prev(?:ious)?)\s+tab$')
+@_rule(r'^(?:switch\s+to\s+|go\s+to\s+)?(?:the\s+)?prev(?:ious)?\s+tab$')
 def _r_prev_tab(_m: re.Match) -> dict:
     return {
         'intent': IntentType.TAB_OPERATION,
         'confidence': 0.99,
         'steps': [{'action': ActionType.PREV_TAB, 'agent': 'Chrome Executor', 'desc': 'Previous tab'}],
+    }
+
+
+@_rule(r'^(?:reload|refresh)(?:\s+(?:this\s+)?page)?$')
+def _r_reload_page(_m: re.Match) -> dict:
+    return {
+        'intent': IntentType.TAB_OPERATION,
+        'confidence': 0.99,
+        'steps': [{'action': ActionType.BROWSE, 'agent': 'Chrome Executor', 'desc': 'Reload page'}],
     }
 
 

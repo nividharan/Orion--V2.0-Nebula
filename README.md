@@ -148,14 +148,14 @@ orion record 4                                   # Record 4s of audio to WAV
 
 ---
 
-## 🌐 Local Perception Server (Port 8765)
+## 🧵 Async vs Sync Architecture & Thread Safety
 
-Start the lightweight background server for real-time web dashboard streaming:
+Orion is engineered for complex agent environments (AutoGen, asyncio, multi-agent frameworks) where calling Playwright's sync API from inside an active event loop normally causes `Synchronous event loop error`.
 
-```powershell
-orion api
-```
-Open **`http://localhost:8765/`** in your browser to inspect live screen streaming, frame settlement, and workstation telemetry.
+To solve this:
+* **Dedicated Worker Thread / Event Loop**: `BrowserManager.run_isolated(func, *args, **kwargs)` dispatches browser operations to a dedicated worker thread with its own independent lifecycle.
+* **Thread-Safe Facade**: `BrowserManager` encapsulates Playwright in a thread-safe mutex wrapper, ensuring safe concurrent invocation across async agents and sync CLI runners.
+* **CDP In-Memory Perception**: `take_screenshot()` captures directly from the active Chrome page via Chrome DevTools Protocol (CDP), avoiding GDI/Win32 restrictions.
 
 ---
 
