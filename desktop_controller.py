@@ -1526,6 +1526,27 @@ PORTAL_MAP = {
     "playstore": "https://play.google.com/store/games"
 }
 
+def resolve_youtube_top_video_url(query: str):
+    """Fetches top matching YouTube video watch URL for direct instant playback (<800ms)."""
+    try:
+        import re
+        import urllib.request
+        import urllib.parse
+        clean_q = re.sub(r'\btamol\b', 'tamil', query.strip(), flags=re.I)
+        encoded = urllib.parse.quote_plus(clean_q)
+        req = urllib.request.Request(
+            f"https://www.youtube.com/results?search_query={encoded}",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        html = urllib.request.urlopen(req, timeout=3).read().decode("utf-8", errors="ignore")
+        vids = re.findall(r'/watch\?v=([a-zA-Z0-9_-]{11})', html)
+        if vids:
+            return f"https://www.youtube.com/watch?v={vids[0]}"
+    except Exception:
+        pass
+    return None
+
+
 def resolve_web_target(query_or_url: str) -> str:
     """Smart URL/Query Resolver for portals, direct domains, and search queries."""
     import urllib.parse
@@ -1546,14 +1567,23 @@ def resolve_web_target(query_or_url: str) -> str:
             return f"https://play.google.com/store/search?q={urllib.parse.quote_plus(sub_query)}&c=apps"
         return "https://play.google.com/store/games"
 
-    # Special handling for YouTube search queries
+    # Special handling for YouTube search queries & instant playback
     if "youtube" in clean_lower:
         sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on|go\s+to)\s+', '', clean, flags=re.I)
         sub_query = re.sub(r'(?:in|on)?\s*youtube', '', sub_query, flags=re.I).strip()
         sub_query = re.sub(r'^(?:for|search\s*for|and\s+search\s+for|and\s+search)\s+', '', sub_query, flags=re.I).strip()
         if sub_query:
-            return f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(sub_query)}"
+            should_play = bool(re.search(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen)\b', sub_query, re.I))
+            clean_sub = re.sub(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen)\b', '', sub_query, flags=re.I).strip()
+            clean_sub = re.sub(r'^(?:a|an|the)\s+', '', clean_sub, flags=re.I).strip()
+            clean_sub = re.sub(r'\btamol\b', 'tamil', clean_sub, flags=re.I)
+            if should_play:
+                direct_video = resolve_youtube_top_video_url(clean_sub)
+                if direct_video:
+                    return direct_video
+            return f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(clean_sub or sub_query)}"
         return "https://www.youtube.com/"
+
 
     # Special handling for GitHub search queries
     if "github" in clean_lower:

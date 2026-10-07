@@ -115,7 +115,40 @@ class NebulaModel:
         lower = raw.lower()
 
         # -------------------------------------------------------------
-        # 1. Compound Portal Searches: "open <portal> and search for <query>"
+        # 1. Direct Play Command: "play <query> [on youtube]"
+        # -------------------------------------------------------------
+        play_direct = re.search(r'^(?:play|listen\s+to|start)\s+(.+?)(?:\s+(?:on|in)\s+youtube)?$', raw, re.I)
+        if play_direct:
+            term = play_direct.group(1).strip()
+            term = re.sub(r'\btamol\b', 'tamil', term, flags=re.I)
+            top_video_url = orion_core.resolve_youtube_top_video_url(term)
+            target_url = top_video_url if top_video_url else f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(term)}"
+            steps.append({
+                "agent": "Chrome Executor",
+                "action": "browse",
+                "target": target_url,
+                "portal": "youtube",
+                "query": term,
+                "play": True,
+                "desc": f"Launch Chrome and play '{term}' on YouTube"
+            })
+            steps.append({
+                "agent": "Perception Inspector",
+                "action": "shot",
+                "target": None,
+                "desc": "Verify active YouTube video playback on desktop"
+            })
+            if self.use_voice:
+                steps.append({
+                    "agent": "Studio Narrator",
+                    "action": "speak",
+                    "target": f"Now playing {term} on YouTube, sir.",
+                    "desc": "Announce playback via Microsoft George HD"
+                })
+            return steps
+
+        # -------------------------------------------------------------
+        # 2. Compound Portal Searches: "open <portal> and search for <query>"
         # -------------------------------------------------------------
         compound_search = re.search(
             r'^(?:open|launch|go to)\s+(google\s*play|play\s*store|youtube|github|amazon|wikipedia|reddit|google)\s+and\s+(?:search|look\s*up)\s+(?:for\s+)?(.+)$',
@@ -125,14 +158,47 @@ class NebulaModel:
         if compound_search:
             portal = compound_search.group(1).strip()
             term = compound_search.group(2).strip()
-            url = self.resolve_portal_search_url(portal, term)
+
+            should_play = bool(re.search(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen)\b', term, re.I))
+            clean_term = re.sub(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen)\b', '', term, flags=re.I).strip()
+            clean_term = re.sub(r'^(?:a|an|the|for)\s+', '', clean_term, flags=re.I).strip()
+            clean_term = re.sub(r'\btamol\b', 'tamil', clean_term, flags=re.I)
+
+            if "youtube" in portal.lower() and should_play:
+                top_video_url = orion_core.resolve_youtube_top_video_url(clean_term)
+                target_url = top_video_url if top_video_url else self.resolve_portal_search_url(portal, clean_term)
+                steps.append({
+                    "agent": "Chrome Executor",
+                    "action": "browse",
+                    "target": target_url,
+                    "portal": portal,
+                    "query": clean_term,
+                    "play": True,
+                    "desc": f"Launch Chrome and play '{clean_term}' on YouTube"
+                })
+                steps.append({
+                    "agent": "Perception Inspector",
+                    "action": "shot",
+                    "target": None,
+                    "desc": "Verify active YouTube video playback on desktop"
+                })
+                if self.use_voice:
+                    steps.append({
+                        "agent": "Studio Narrator",
+                        "action": "speak",
+                        "target": f"Now playing {clean_term} on YouTube, sir.",
+                        "desc": "Announce playback via Microsoft George HD"
+                    })
+                return steps
+
+            url = self.resolve_portal_search_url(portal, clean_term or term)
             steps.append({
                 "agent": "Chrome Executor",
                 "action": "browse",
                 "target": url,
                 "portal": portal,
-                "query": term,
-                "desc": f"Launch Chrome and navigate to {portal.title()} search for '{term}'"
+                "query": clean_term or term,
+                "desc": f"Launch Chrome and navigate to {portal.title()} search for '{clean_term or term}'"
             })
             steps.append({
                 "agent": "Perception Inspector",
@@ -144,13 +210,13 @@ class NebulaModel:
                 steps.append({
                     "agent": "Studio Narrator",
                     "action": "speak",
-                    "target": f"Navigated to {portal.title()} and retrieved search results for {term}.",
+                    "target": f"Navigated to {portal.title()} and retrieved search results for {clean_term or term}.",
                     "desc": "Announce completion via Microsoft George HD"
                 })
             return steps
 
         # -------------------------------------------------------------
-        # 2. Direct Search Command: "search <portal> for <query>"
+        # 3. Direct Search Command: "search <portal> for <query>"
         # -------------------------------------------------------------
         direct_search = re.search(
             r'^(?:search|look\s*up)\s+(google\s*play|play\s*store|youtube|github|amazon|wikipedia|reddit|google)?\s*(?:for\s+)?(.+)$',
@@ -160,17 +226,49 @@ class NebulaModel:
         if direct_search:
             portal = direct_search.group(1) or "google"
             term = direct_search.group(2).strip()
-            # If prompt was just "search for X"
             if term.startswith("for "):
                 term = term[4:].strip()
-            url = self.resolve_portal_search_url(portal, term)
+
+            should_play = bool(re.search(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen)\b', term, re.I))
+            clean_term = re.sub(r'\b(?:and\s+)?(?:play\s+it|play|start\s+it|listen)\b', '', term, flags=re.I).strip()
+            clean_term = re.sub(r'^(?:a|an|the|for)\s+', '', clean_term, flags=re.I).strip()
+            clean_term = re.sub(r'\btamol\b', 'tamil', clean_term, flags=re.I)
+
+            if "youtube" in portal.lower() and should_play:
+                top_video_url = orion_core.resolve_youtube_top_video_url(clean_term)
+                target_url = top_video_url if top_video_url else self.resolve_portal_search_url(portal, clean_term)
+                steps.append({
+                    "agent": "Chrome Executor",
+                    "action": "browse",
+                    "target": target_url,
+                    "portal": portal,
+                    "query": clean_term,
+                    "play": True,
+                    "desc": f"Launch Chrome and play '{clean_term}' on YouTube"
+                })
+                steps.append({
+                    "agent": "Perception Inspector",
+                    "action": "shot",
+                    "target": None,
+                    "desc": "Verify active YouTube video playback on desktop"
+                })
+                if self.use_voice:
+                    steps.append({
+                        "agent": "Studio Narrator",
+                        "action": "speak",
+                        "target": f"Now playing {clean_term} on YouTube, sir.",
+                        "desc": "Announce playback via Microsoft George HD"
+                    })
+                return steps
+
+            url = self.resolve_portal_search_url(portal, clean_term or term)
             steps.append({
                 "agent": "Chrome Executor",
                 "action": "browse",
                 "target": url,
                 "portal": portal,
-                "query": term,
-                "desc": f"Open Chrome to {portal.title()} search for '{term}'"
+                "query": clean_term or term,
+                "desc": f"Open Chrome to {portal.title()} search for '{clean_term or term}'"
             })
             steps.append({
                 "agent": "Perception Inspector",
@@ -182,10 +280,11 @@ class NebulaModel:
                 steps.append({
                     "agent": "Studio Narrator",
                     "action": "speak",
-                    "target": f"Retrieved search results for {term} on {portal.title()}.",
+                    "target": f"Retrieved search results for {clean_term or term} on {portal.title()}.",
                     "desc": "Announce completion via Microsoft George HD"
                 })
             return steps
+
 
         # -------------------------------------------------------------
         # 3. Tab Operations
