@@ -6,6 +6,9 @@ __pycache__/
 
 # Sensitive artifacts & sessions
 storage_state.json
+site_memory.json
+traces/
+profiles/
 *.zip
 *.log
 *.html
