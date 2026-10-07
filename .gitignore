@@ -11,6 +11,7 @@ storage_state.json
 *.html
 .env
 .env.*
+!.env.example
 *.secret
 
 

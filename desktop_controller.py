@@ -1529,6 +1529,14 @@ PORTAL_MAP = {
 def resolve_youtube_top_video_url(query: str):
     """Fetches top matching YouTube video watch URL for direct instant playback (<800ms)."""
     try:
+        from nebula_brain import NebulaBrain
+        media = NebulaBrain.resolve_youtube_media(query)
+        if media and media.get("url"):
+            return media["url"]
+    except Exception:
+        pass
+
+    try:
         import re
         import urllib.request
         import urllib.parse
