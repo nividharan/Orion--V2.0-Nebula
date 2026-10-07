@@ -30,7 +30,25 @@ SENSITIVE_ACTIONS: Set[str] = {
     "pay",
     "delete",
     "purchase",
-    "checkout"
+    "checkout",
+    "send",
+    "confirm",
+    "remove account",
+    "place order",
+    "buy"
+}
+
+# Sensitive patterns per Phase 1 spec: (pay, place order, buy, checkout, delete, remove account, submit, send, confirm)
+SENSITIVE_PATTERNS: Set[str] = {
+    "pay",
+    "place order",
+    "buy",
+    "checkout",
+    "delete",
+    "remove account",
+    "submit",
+    "send",
+    "confirm"
 }
 
 # Security: Sensitive target keywords (accessible name, button text, aria-label, etc.)
@@ -47,7 +65,9 @@ SENSITIVE_TARGET_KEYWORDS: Set[str] = {
     "remove account",
     "transfer",
     "subscribe",
-    "submit payment"
+    "submit payment",
+    "send",
+    "confirm"
 }
 
 # Security: Domain allow-list (None means all allowed, or set of allowed hostnames)
@@ -55,22 +75,34 @@ DOMAIN_ALLOW_LIST: Optional[Set[str]] = None
 
 MAX_STEPS_PER_TASK: int = 25
 
+_GLOBAL_KILL_SWITCH_ACTIVE: bool = False
+
+def set_global_kill_switch(active: bool = True):
+    global _GLOBAL_KILL_SWITCH_ACTIVE
+    _GLOBAL_KILL_SWITCH_ACTIVE = active
+
+def is_global_kill_switch_active() -> bool:
+    return _GLOBAL_KILL_SWITCH_ACTIVE
+
 
 def is_action_or_target_sensitive(
     action_name: str,
     target_text: Optional[str] = None,
-    accessible_name: Optional[str] = None
+    accessible_name: Optional[str] = None,
+    form_action: Optional[str] = None,
+    href: Optional[str] = None
 ) -> bool:
     """
     Evaluates whether an action or the element being interacted with is sensitive.
-    Guards both action names ('pay', 'checkout') AND target element labels ('Place order', 'Delete account').
+    Guards action names ('pay', 'checkout'), target element labels ('Place order', 'Delete account'),
+    as well as form actions and href attributes.
     """
     act_lower = action_name.lower().strip()
-    if act_lower in SENSITIVE_ACTIONS:
+    if act_lower in SENSITIVE_ACTIONS or any(p in act_lower for p in SENSITIVE_PATTERNS):
         return True
 
-    text_to_check = f"{target_text or ''} {accessible_name or ''}".lower()
-    for kw in SENSITIVE_TARGET_KEYWORDS:
+    text_to_check = f"{target_text or ''} {accessible_name or ''} {form_action or ''} {href or ''}".lower()
+    for kw in SENSITIVE_PATTERNS | SENSITIVE_TARGET_KEYWORDS:
         if kw in text_to_check:
             return True
 

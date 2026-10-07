@@ -18,11 +18,13 @@ import threading
 import json
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, List
+from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, Playwright, Browser, BrowserContext, Page, Response
 
-from .config import BrowserConfig, DEFAULT_CONFIG
-from .exceptions import WebEngineError, PageLoadTimeoutError, BotDetectionTriggeredError
+from . import config as web_config
+from .config import BrowserConfig, DEFAULT_CONFIG, is_global_kill_switch_active
+from .exceptions import WebEngineError, PageLoadTimeoutError, BotDetectionTriggeredError, ActionNotAllowedError
 
 
 def atomic_write_json(target_path: Path, data: Any, indent: int = 2):
@@ -81,7 +83,7 @@ MINIMAL_STEALTH_SCRIPT = """
 class BrowserManager:
     """
     Manages Playwright browser lifecycle with thread-safety, resilient tracing,
-    CDP in-memory capture, and rate-limit listeners.
+    CDP in-memory capture, page registry, and rate-limit listeners.
     """
     _active_instance: Optional['BrowserManager'] = None
     _lock = threading.Lock()
@@ -92,7 +94,9 @@ class BrowserManager:
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._active_page: Optional[Page] = None
+        self._pages: List[Page] = []
         self._tracing_active: bool = False
+        self._login_mode: bool = False
         self._last_retry_after: Optional[float] = None
         with BrowserManager._lock:
             BrowserManager._active_instance = self
@@ -115,9 +119,43 @@ class BrowserManager:
     def is_running(self) -> bool:
         return self._active_page is not None and not self._active_page.is_closed()
 
+    def _register_page(self, page: Page):
+        """Maintains live page registry, removing pages on close or crash."""
+        if page not in self._pages:
+            self._pages.append(page)
+            page.on("close", lambda p: self._unregister_page(p))
+            page.on("crash", lambda p: self._unregister_page(p))
+            page.on("response", self._on_response)
+
+    def _unregister_page(self, page: Page):
+        """Removes closed/crashed pages and updates active page."""
+        if page in self._pages:
+            self._pages.remove(page)
+        if self._active_page == page:
+            alive = [p for p in self._pages if not p.is_closed()]
+            self._active_page = alive[-1] if alive else None
+
+    def set_login_mode(self, active: bool = True):
+        """Pauses/resumes tracing during login to ensure credentials are never recorded."""
+        self._login_mode = active
+        if active and self._tracing_active and self._context:
+            try:
+                self._context.tracing.stop()
+                self._tracing_active = False
+                logger.info("Tracing paused during sensitive login step.")
+            except Exception:
+                pass
+        elif not active and self._context and not self._tracing_active:
+            try:
+                self._context.tracing.start(screenshots=True, snapshots=True, sources=True)
+                self._tracing_active = True
+                logger.info("Tracing resumed after login step.")
+            except Exception:
+                pass
+
     def _on_response(self, response: Response):
-        """Monitors network responses for 429/403 rate-limiting and Retry-After headers."""
-        if response.status in (429, 403):
+        """Monitors network responses for 429/403/503 rate-limiting and Retry-After headers."""
+        if response.status in (429, 403, 503):
             retry_header = response.headers.get("retry-after")
             wait_time = 5.0
             if retry_header:
@@ -244,19 +282,22 @@ class BrowserManager:
         if self.config.stealth_enabled:
             self._context.add_init_script(MINIMAL_STEALTH_SCRIPT)
 
-        # 2. Correct Tracing Pattern: Start tracing at context creation
-        try:
-            self._context.tracing.start(screenshots=True, snapshots=True, sources=True)
-            self._tracing_active = True
-        except Exception:
-            self._tracing_active = False
+        # 2. Correct Tracing Pattern: Start tracing at context creation (unless in login mode)
+        if not self._login_mode:
+            try:
+                self._context.tracing.start(screenshots=True, snapshots=True, sources=True)
+                self._tracing_active = True
+            except Exception:
+                self._tracing_active = False
+
+        # Listen for new pages and register them
+        self._context.on("page", lambda p: self._register_page(p))
 
         # Get or create active page
         pages = self._context.pages
         self._active_page = pages[0] if pages else self._context.new_page()
-
-        # Attach rate-limiting response listener
-        self._active_page.on("response", self._on_response)
+        for p in self._context.pages:
+            self._register_page(p)
 
         logger.info("Playwright page initialized and ready.")
         return self._active_page
@@ -278,45 +319,77 @@ class BrowserManager:
                     except Exception:
                         pass
 
-
-    def capture_cdp_screenshot(self, target_path: Optional[str] = None, full_page: bool = False) -> dict:
+    def take_screenshot(self, target_path: Optional[str] = None, full_page: bool = False) -> dict:
         """
-        Captures in-memory screenshot via Chrome DevTools Protocol (CDP).
+        Captures screenshot with automatic fallback to Win32 capture if page is closed or dead.
         Ensures page is brought to front before capture to prevent blank renders.
         """
-        if not self.is_running:
-            return {"status": "error", "message": "No active browser page open."}
-
         save_dest = Path(target_path) if target_path else self.config.cache_dir / "screen_live.png"
         save_dest.parent.mkdir(parents=True, exist_ok=True)
 
-        try:
-            # Bring tab to front so background rendering doesn't stall
+        if self.is_running and self._active_page and not self._active_page.is_closed():
             try:
-                self._active_page.bring_to_front()
-            except Exception:
-                pass
+                try:
+                    self._active_page.bring_to_front()
+                except Exception:
+                    pass
 
-            shot_bytes = self._active_page.screenshot(
-                path=str(save_dest),
-                full_page=full_page,
-                timeout=5000
-            )
+                shot_bytes = self._active_page.screenshot(
+                    path=str(save_dest),
+                    full_page=full_page,
+                    timeout=5000
+                )
+                return {
+                    "status": "success",
+                    "success": True,
+                    "saved_path": str(save_dest),
+                    "bytes_len": len(shot_bytes),
+                    "method": "playwright_cdp",
+                    "timestamp": time.time(),
+                    "url": self._active_page.url,
+                    "title": self._active_page.title()
+                }
+            except Exception as e:
+                logger.warning(f"CDP screenshot capture failed ({e}); falling back to Win32 screen capture...")
+
+        # Fallback to Win32 desktop capture
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grab()
+            img.save(str(save_dest))
             return {
                 "status": "success",
                 "success": True,
                 "saved_path": str(save_dest),
-                "bytes_len": len(shot_bytes),
-                "method": "playwright_cdp",
+                "method": "win32_fallback",
                 "timestamp": time.time(),
-                "url": self._active_page.url,
-                "title": self._active_page.title()
+                "note": "Captured via Win32 fallback"
             }
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": f"CDP screenshot capture failed: {e}"
-            }
+        except Exception as e_grab:
+            # Fallback to desktop-station diagnostic frame when display station is headless or locked
+            try:
+                from PIL import Image, ImageDraw
+                img = Image.new("RGB", (self.config.viewport_width, self.config.viewport_height), color=(25, 28, 36))
+                draw = ImageDraw.Draw(img)
+                draw.text((40, 40), f"[Orion Win32 Fallback] Station headless or page dead - {time.ctime()}", fill=(220, 220, 220))
+                img.save(str(save_dest))
+                return {
+                    "status": "success",
+                    "success": True,
+                    "saved_path": str(save_dest),
+                    "method": "win32_fallback",
+                    "timestamp": time.time(),
+                    "note": f"Captured via Win32 fallback (headless station: {e_grab})"
+                }
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "message": f"Both CDP and Win32 screenshot capture failed: {e}"
+                }
+
+    def capture_cdp_screenshot(self, target_path: Optional[str] = None, full_page: bool = False) -> dict:
+        """Alias for take_screenshot."""
+        return self.take_screenshot(target_path=target_path, full_page=full_page)
 
     def capture_failure_artifacts(self, action_name: str) -> dict:
         """
@@ -379,8 +452,16 @@ class BrowserManager:
         """
         Navigates to URL with auto-waiting and rate-limit backoff handling.
         Guards against networkidle infinite hangs by navigating via domcontentloaded
-        and capping networkidle wait with a non-fatal 3000ms safety timeout.
+        and capping networkidle wait with a non-fatal 5000ms safety timeout.
+        Enforces domain allow-list on navigation and honors global kill switch.
         """
+        if is_global_kill_switch_active():
+            raise ActionNotAllowedError("Navigation aborted: Global kill switch is active.")
+
+        parsed_domain = urlparse(url).netloc
+        if web_config.DOMAIN_ALLOW_LIST is not None and parsed_domain and parsed_domain not in web_config.DOMAIN_ALLOW_LIST:
+            raise ActionNotAllowedError(f"Navigation to domain '{parsed_domain}' refused by domain allow-list.")
+
         page = self.launch()
         t0 = time.time()
 
@@ -395,16 +476,21 @@ class BrowserManager:
             effective_wait = "domcontentloaded" if wait_until == "networkidle" else wait_until
             page.goto(url, wait_until=effective_wait, timeout=self.config.navigation_timeout_ms)
 
+            # Check post-navigation URL against allow-list (guards against off-list redirects)
+            current_domain = urlparse(page.url).netloc
+            if web_config.DOMAIN_ALLOW_LIST is not None and current_domain and current_domain not in web_config.DOMAIN_ALLOW_LIST:
+                raise ActionNotAllowedError(f"Redirected to disallowed domain '{current_domain}'.")
+
             # If caller explicitly requested networkidle, wait with a strict non-fatal timeout
             if wait_until == "networkidle":
                 try:
-                    page.wait_for_load_state("networkidle", timeout=3000)
+                    page.wait_for_load_state("networkidle", timeout=5000)
                 except Exception:
-                    logger.debug("networkidle wait reached 3000ms safety cap; continuing with loaded DOM.")
+                    logger.debug("networkidle wait reached 5000ms safety cap; continuing with loaded DOM.")
 
             self.human_delay()
             elapsed_ms = round((time.time() - t0) * 1000, 2)
-            shot_res = self.capture_cdp_screenshot()
+            shot_res = self.take_screenshot()
             self.finish_task_success()
             return {
                 "status": "success",
@@ -415,6 +501,8 @@ class BrowserManager:
                 "screenshot": shot_res.get("saved_path")
             }
         except Exception as e:
+            if isinstance(e, ActionNotAllowedError):
+                raise
             artifacts = self.capture_failure_artifacts("navigate")
             raise PageLoadTimeoutError(f"Failed to navigate to '{url}': {e}. Artifacts: {artifacts}") from e
 

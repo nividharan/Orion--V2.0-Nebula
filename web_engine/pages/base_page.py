@@ -37,6 +37,7 @@ class BasePage:
         self.mgr = browser_mgr
         self.action_logs: List[Dict[str, Any]] = []
         self._site_memory: Dict[str, Any] = self._load_site_memory()
+        self._dismissed_consent_urls = set()
 
     @property
     def page(self) -> Page:
@@ -232,9 +233,11 @@ class BasePage:
         self.dismiss_cookie_banners()
         loc = self.find_first_visible(fallback_chain, target_name, timeout_ms)
 
-        # Inspect target element accessible text to guard against sensitive actions
-        # (e.g. clicking 'Place order', 'Delete account', 'Submit payment')
+        # Inspect target element accessible text, form action, and href to guard against sensitive actions
+        # (e.g. clicking 'Place order', 'Delete account', 'Submit payment', or links to checkout/delete)
         accessible_text = ""
+        form_action = ""
+        href = ""
         try:
             accessible_text = (
                 loc.get_attribute("aria-label") or
@@ -243,10 +246,12 @@ class BasePage:
                 loc.get_attribute("title") or
                 ""
             ).strip()
+            form_action = loc.get_attribute("formaction") or ""
+            href = loc.get_attribute("href") or ""
         except Exception:
             pass
 
-        if is_action_or_target_sensitive("click", target_name, accessible_text):
+        if is_action_or_target_sensitive("click", target_name, accessible_text, form_action, href):
             raise ActionNotAllowedError(
                 f"Action 'click' on target '{target_name}' (accessible name: '{accessible_text}') "
                 f"is sensitive and requires explicit human confirmation."
@@ -256,7 +261,7 @@ class BasePage:
         self.mgr.human_delay(0.1, 0.2)
         loc.click(timeout=timeout_ms)
         self.mgr.human_delay(0.1, 0.25)
-        self._log_action("click", target_name, {"accessible_name": accessible_text}, time.time() - t0, "success")
+        self._log_action("click", target_name, {"accessible_name": accessible_text, "href": href}, time.time() - t0, "success")
 
     def fill_with_fallback(
         self,
@@ -276,6 +281,7 @@ class BasePage:
         loc = self.find_first_visible(fallback_chain, target_name, timeout_ms)
 
         accessible_text = ""
+        form_action = ""
         try:
             accessible_text = (
                 loc.get_attribute("aria-label") or
@@ -283,10 +289,11 @@ class BasePage:
                 loc.get_attribute("name") or
                 ""
             ).strip()
+            form_action = loc.get_attribute("formaction") or ""
         except Exception:
             pass
 
-        if is_action_or_target_sensitive("fill", target_name, accessible_text):
+        if is_action_or_target_sensitive("fill", target_name, accessible_text, form_action):
             raise ActionNotAllowedError(
                 f"Action 'fill' on target '{target_name}' (accessible name: '{accessible_text}') "
                 f"is sensitive and requires explicit human confirmation."
@@ -303,59 +310,93 @@ class BasePage:
         self.mgr.human_delay(0.1, 0.2)
         self._log_action("fill", target_name, {"length": len(value), "press_enter": press_enter, "accessible_name": accessible_text}, time.time() - t0, "success")
 
-    def dismiss_cookie_banners(self):
+    def dismiss_cookie_banners(self, force: bool = False):
         """
         Safely dismisses cookie consent dialogs:
-        - Step 1: Checks direct 'Reject all' / 'Necessary only' buttons.
-        - Step 2: Multi-step CMP flow (OneTrust, Cookiebot, Didomi): If direct reject is hidden
-                  behind 'Manage preferences' / 'Cookie Settings', clicks it, then clicks
-                  'Reject all' / 'Confirm my choices'.
-        - Step 3: Generic modal dismissers.
+        - 1 attempt per page/URL to prevent spamming.
+        - Scoped strictly to [role=dialog], [aria-modal=true], OneTrust/Cookiebot/Didomi/Quantcast containers.
+        - Priority order: Reject all -> Necessary only -> Manage preferences then minimal save.
+        - Never auto 'Accept all' unless config.allow_accept_all is True.
+        - Handles iframes and logs every consent action.
         """
-        # 1. Direct rejection locators
-        for sel in COOKIE_CONSENT_LOCATORS:
-            try:
-                loc = self.resolve_locator(sel)
-                loc.first.wait_for(state="visible", timeout=180)
-                loc.first.click(timeout=600)
-                logger.info(f"Safely handled cookie dialog via direct {sel.get('name', sel.get('css', 'selector'))}.")
-                self.mgr.human_delay(0.1, 0.2)
-                return
-            except Exception:
-                continue
+        current_url = getattr(self.page, "url", "")
+        if not force and current_url in self._dismissed_consent_urls:
+            return
+        self._dismissed_consent_urls.add(current_url)
 
-        # 2. Multi-step CMP flow (Manage preferences -> Reject all)
-        for pref_sel in CMP_MANAGE_PREFERENCES_LOCATORS:
-            try:
-                loc = self.resolve_locator(pref_sel)
-                loc.first.wait_for(state="visible", timeout=180)
-                loc.first.click(timeout=600)
-                logger.info(f"Opened CMP preference panel via {pref_sel.get('name', pref_sel.get('css', 'selector'))}.")
-                self.mgr.human_delay(0.1, 0.2)
+        # Build list of contexts to check: main page + all attached frames
+        contexts = [self.page]
+        try:
+            contexts.extend(self.page.frames)
+        except Exception:
+            pass
 
-                for conf_sel in CMP_CONFIRM_OR_REJECT_LOCATORS:
+        from ..locators.base_locators import COOKIE_REJECT_LOCATORS, COOKIE_ACCEPT_LOCATORS
+
+        for ctx in contexts:
+            # 1. Direct rejection locators (Reject all -> Necessary only)
+            for sel in COOKIE_REJECT_LOCATORS:
+                try:
+                    loc = self.resolve_locator(sel, context=ctx)
+                    loc.first.wait_for(state="visible", timeout=180)
+                    loc.first.click(timeout=600)
+                    sel_desc = sel.get('name', sel.get('css', 'reject_btn'))
+                    logger.info(f"Safely dismissed cookie consent via direct reject: {sel_desc}")
+                    self._log_action("cookie_consent", sel_desc, {"mode": "reject_direct"}, 0.1, "success")
+                    self.mgr.human_delay(0.1, 0.2)
+                    return
+                except Exception:
+                    continue
+
+            # 2. Multi-step CMP flow (Manage preferences -> Reject all / minimal save)
+            for pref_sel in CMP_MANAGE_PREFERENCES_LOCATORS:
+                try:
+                    loc = self.resolve_locator(pref_sel, context=ctx)
+                    loc.first.wait_for(state="visible", timeout=180)
+                    loc.first.click(timeout=600)
+                    logger.info(f"Opened CMP preference panel via {pref_sel.get('name', pref_sel.get('css', 'selector'))}.")
+                    self.mgr.human_delay(0.1, 0.2)
+
+                    for conf_sel in CMP_CONFIRM_OR_REJECT_LOCATORS:
+                        try:
+                            conf_loc = self.resolve_locator(conf_sel, context=ctx)
+                            conf_loc.first.wait_for(state="visible", timeout=400)
+                            conf_loc.first.click(timeout=600)
+                            sel_desc = conf_sel.get('name', conf_sel.get('css', 'conf_btn'))
+                            logger.info(f"Rejected CMP cookies inside preferences via {sel_desc}.")
+                            self._log_action("cookie_consent", sel_desc, {"mode": "cmp_preferences_save"}, 0.1, "success")
+                            self.mgr.human_delay(0.1, 0.2)
+                            return
+                        except Exception:
+                            continue
+                    return
+                except Exception:
+                    continue
+
+            # 3. Only if explicit allow_accept_all is enabled in config
+            if getattr(self.mgr.config, "allow_accept_all", False):
+                for sel in COOKIE_ACCEPT_LOCATORS:
                     try:
-                        conf_loc = self.resolve_locator(conf_sel)
-                        conf_loc.first.wait_for(state="visible", timeout=400)
-                        conf_loc.first.click(timeout=600)
-                        logger.info(f"Rejected CMP cookies inside preferences via {conf_sel.get('name', conf_sel.get('css', 'selector'))}.")
+                        loc = self.resolve_locator(sel, context=ctx)
+                        loc.first.wait_for(state="visible", timeout=180)
+                        loc.first.click(timeout=600)
+                        sel_desc = sel.get('name', sel.get('css', 'accept_btn'))
+                        logger.info(f"Accepted cookie consent (config permitted) via {sel_desc}.")
+                        self._log_action("cookie_consent", sel_desc, {"mode": "accept_allowed"}, 0.1, "success")
                         self.mgr.human_delay(0.1, 0.2)
                         return
                     except Exception:
                         continue
-                return
-            except Exception:
-                continue
 
-        # 3. Dismiss blocking generic popups
-        for sel in MODAL_CLOSE_LOCATORS:
-            try:
-                loc = self.resolve_locator(sel)
-                loc.first.wait_for(state="visible", timeout=150)
-                loc.first.click(timeout=500)
-                break
-            except Exception:
-                continue
+            # 4. Dismiss blocking generic popups
+            for sel in MODAL_CLOSE_LOCATORS:
+                try:
+                    loc = self.resolve_locator(sel, context=ctx)
+                    loc.first.wait_for(state="visible", timeout=150)
+                    loc.first.click(timeout=500)
+                    break
+                except Exception:
+                    continue
 
     def wait_for_network_idle(self, timeout_ms: int = 3000):
         """

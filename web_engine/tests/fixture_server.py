@@ -90,8 +90,10 @@ FIXTURE_HTML = """<!DOCTYPE html>
         </section>
 
         <section id="iframe-section">
-            <h2>Nested Frame</h2>
+            <h2>Nested Frames & Iframe Consent</h2>
             <iframe id="test-iframe" srcdoc="<p id='frame-text'>Inside Test Iframe</p>"></iframe>
+            <iframe id="consent-iframe" srcdoc="<div role='dialog' aria-modal='true'><button id='iframe-reject-btn' role='button'>Reject all</button></div>"></iframe>
+            <iframe id="parent-frame" srcdoc="<iframe id='child-frame' srcdoc='<p id=&quot;nested-child-text&quot;>Nested Child Content</p>'></iframe>"></iframe>
         </section>
     </div>
 
