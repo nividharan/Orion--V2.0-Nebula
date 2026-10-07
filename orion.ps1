@@ -32,6 +32,18 @@ if ($firstArg -eq "heal") {
     return
 }
 
+if ($firstArg -eq "chrome") {
+    $chromeArgs = $ArgsList[1..($ArgsList.Count - 1)]
+    & python $PythonScript chrome @chromeArgs
+    return
+}
+
+if ($firstArg -in @("close", "kill", "terminate")) {
+    $closeArgs = $ArgsList[1..($ArgsList.Count - 1)]
+    & python $PythonScript close @closeArgs
+    return
+}
+
 if ($firstArg -in @("console", "shell", "interactive", "terminal")) {
     & python $PythonScript console
     return

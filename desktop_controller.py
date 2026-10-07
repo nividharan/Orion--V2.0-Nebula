@@ -1493,12 +1493,49 @@ def resolve_web_target(query_or_url: str) -> str:
     clean_lower = clean.lower()
 
     # Special handling for Google Play Store search queries
-    if ("google play" in clean_lower or "play store" in clean_lower or "playstore" in clean_lower) and any(w in clean_lower for w in ["search", "find", "for", "game", "app"]):
-        sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on)\s+', '', clean, flags=re.I)
+    if "google play" in clean_lower or "play store" in clean_lower or "playstore" in clean_lower:
+        sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on|go\s+to)\s+', '', clean, flags=re.I)
         sub_query = re.sub(r'(?:in|on)?\s*(?:google\s*play|play\s*store|playstore)', '', sub_query, flags=re.I).strip()
-        sub_query = re.sub(r'^(?:for|search\s*for)\s+', '', sub_query, flags=re.I).strip()
+        sub_query = re.sub(r'^(?:for|search\s*for|and\s+search\s+for|and\s+search)\s+', '', sub_query, flags=re.I).strip()
         if sub_query:
             return f"https://play.google.com/store/search?q={urllib.parse.quote_plus(sub_query)}&c=apps"
+        return "https://play.google.com/store/games"
+
+    # Special handling for YouTube search queries
+    if "youtube" in clean_lower:
+        sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on|go\s+to)\s+', '', clean, flags=re.I)
+        sub_query = re.sub(r'(?:in|on)?\s*youtube', '', sub_query, flags=re.I).strip()
+        sub_query = re.sub(r'^(?:for|search\s*for|and\s+search\s+for|and\s+search)\s+', '', sub_query, flags=re.I).strip()
+        if sub_query:
+            return f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(sub_query)}"
+        return "https://www.youtube.com/"
+
+    # Special handling for GitHub search queries
+    if "github" in clean_lower:
+        sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on|go\s+to)\s+', '', clean, flags=re.I)
+        sub_query = re.sub(r'(?:in|on)?\s*github', '', sub_query, flags=re.I).strip()
+        sub_query = re.sub(r'^(?:for|search\s*for|and\s+search\s+for|and\s+search)\s+', '', sub_query, flags=re.I).strip()
+        if sub_query:
+            return f"https://github.com/search?q={urllib.parse.quote_plus(sub_query)}"
+        return "https://github.com/"
+
+    # Special handling for Amazon search queries
+    if "amazon" in clean_lower:
+        sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on|go\s+to)\s+', '', clean, flags=re.I)
+        sub_query = re.sub(r'(?:in|on)?\s*amazon', '', sub_query, flags=re.I).strip()
+        sub_query = re.sub(r'^(?:for|search\s*for|and\s+search\s+for|and\s+search)\s+', '', sub_query, flags=re.I).strip()
+        if sub_query:
+            return f"https://www.amazon.com/s?k={urllib.parse.quote_plus(sub_query)}"
+        return "https://www.amazon.com/"
+
+    # Special handling for Wikipedia search queries
+    if "wikipedia" in clean_lower:
+        sub_query = re.sub(r'^(?:open|search|find|for|look\s+up|in|on|go\s+to)\s+', '', clean, flags=re.I)
+        sub_query = re.sub(r'(?:in|on)?\s*wikipedia', '', sub_query, flags=re.I).strip()
+        sub_query = re.sub(r'^(?:for|search\s*for|and\s+search\s+for|and\s+search)\s+', '', sub_query, flags=re.I).strip()
+        if sub_query:
+            return f"https://en.wikipedia.org/wiki/Special:Search?search={urllib.parse.quote_plus(sub_query)}"
+        return "https://www.wikipedia.org/"
 
     # 1. Exact or prefix/suffix match in known portal directory (longest match first)
     for portal_name, portal_url in sorted(PORTAL_MAP.items(), key=lambda x: len(x[0]), reverse=True):
@@ -1619,6 +1656,97 @@ def browse_web(query_or_url: str, browser: str = None) -> dict:
             "browser": browser_pref,
             "error": str(e)
         }
+
+
+def chrome_action(action: str, param: str = None) -> dict:
+    """
+    Dedicated Chrome-native controls for the Orion System:
+      - 'new_tab' / 'tab': Open new tab (ctrl+t), optionally navigate to param URL
+      - 'close_tab': Close current tab (ctrl+w)
+      - 'reopen_tab': Reopen last closed tab (ctrl+shift+t)
+      - 'next_tab' / 'prev_tab': Switch tabs (ctrl+tab / ctrl+shift+tab)
+      - 'reload' / 'refresh': Reload tab (ctrl+r or ctrl+shift+r if param='hard')
+      - 'focus_url' / 'address_bar': Focus address bar (ctrl+l)
+      - 'scroll_down' / 'scroll_up': Scroll page
+      - 'zoom_in' / 'zoom_out' / 'zoom_reset': Zoom controls
+      - 'fullscreen': Toggle F11
+      - 'devtools': Toggle F12
+      - 'close': Close Chrome window/process
+    """
+    act = action.lower().strip()
+    focus_window("chrome")
+    time.sleep(0.08)
+
+    if act in ("new_tab", "tab"):
+        hotkey("ctrl", "t")
+        if param:
+            time.sleep(0.1)
+            type_text(f"{param}\n")
+        return {"status": "success", "action": "chrome_action", "type": "new_tab", "param": param}
+
+    elif act in ("close_tab", "close_current_tab"):
+        hotkey("ctrl", "w")
+        return {"status": "success", "action": "chrome_action", "type": "close_tab"}
+
+    elif act in ("reopen_tab", "restore_tab"):
+        hotkey("ctrl", "shift", "t")
+        return {"status": "success", "action": "chrome_action", "type": "reopen_tab"}
+
+    elif act in ("next_tab", "switch_tab"):
+        hotkey("ctrl", "tab")
+        return {"status": "success", "action": "chrome_action", "type": "next_tab"}
+
+    elif act in ("prev_tab", "previous_tab"):
+        hotkey("ctrl", "shift", "tab")
+        return {"status": "success", "action": "chrome_action", "type": "prev_tab"}
+
+    elif act in ("reload", "refresh"):
+        if param == "hard":
+            hotkey("ctrl", "shift", "r")
+        else:
+            hotkey("ctrl", "r")
+        return {"status": "success", "action": "chrome_action", "type": "reload"}
+
+    elif act in ("focus_url", "address_bar", "url_bar"):
+        hotkey("ctrl", "l")
+        if param:
+            time.sleep(0.05)
+            type_text(f"{param}\n")
+        return {"status": "success", "action": "chrome_action", "type": "focus_url"}
+
+    elif act in ("scroll_down", "page_down"):
+        mouse_scroll(-4)
+        return {"status": "success", "action": "chrome_action", "type": "scroll_down"}
+
+    elif act in ("scroll_up", "page_up"):
+        mouse_scroll(4)
+        return {"status": "success", "action": "chrome_action", "type": "scroll_up"}
+
+    elif act in ("zoom_in",):
+        hotkey("ctrl", "+")
+        return {"status": "success", "action": "chrome_action", "type": "zoom_in"}
+
+    elif act in ("zoom_out",):
+        hotkey("ctrl", "-")
+        return {"status": "success", "action": "chrome_action", "type": "zoom_out"}
+
+    elif act in ("zoom_reset",):
+        hotkey("ctrl", "0")
+        return {"status": "success", "action": "chrome_action", "type": "zoom_reset"}
+
+    elif act in ("fullscreen",):
+        press_key("f11")
+        return {"status": "success", "action": "chrome_action", "type": "fullscreen"}
+
+    elif act in ("devtools", "inspect"):
+        press_key("f12")
+        return {"status": "success", "action": "chrome_action", "type": "devtools"}
+
+    elif act in ("close", "exit", "quit"):
+        return close_application("chrome")
+
+    else:
+        return {"status": "error", "message": f"Unknown Chrome action: '{action}'"}
 
 
 # ==============================================================================
@@ -2943,6 +3071,30 @@ def run_self_healing_cli() -> dict:
 # CLI HANDLER
 # ==============================================================================
 
+class OrionSystem:
+    """
+    🌌 Orion v2.0 'Nebula' - System Layer
+    The universal OS substrate, Win32 automation engine, Chrome runtime driver,
+    continuous screen perception loop, self-healing watchdog, and audio I/O.
+    """
+    browse = staticmethod(browse_web)
+    chrome = staticmethod(chrome_action)
+    launch = staticmethod(launch_application)
+    close = staticmethod(close_application)
+    focus = staticmethod(focus_window)
+    type = staticmethod(type_text)
+    key = staticmethod(press_key)
+    hotkey = staticmethod(hotkey)
+    click = staticmethod(verified_click)
+    scroll = staticmethod(mouse_scroll)
+    screenshot = staticmethod(take_screenshot)
+    speak = staticmethod(speak)
+    listen = staticmethod(listen)
+
+    Perception = ContinuousPerceptionEngine
+    Healer = SelfHealingResolver
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=f"🌌 Orion v{VERSION} \"{CODENAME}\" - Universal Autonomous Desktop & Perception Engine"
@@ -3064,6 +3216,16 @@ def main():
     p_browse = subparsers.add_parser("browse", aliases=["search", "web"])
     p_browse.add_argument("query", nargs="+", help="URL, query string, or portal name")
     p_browse.add_argument("--browser", choices=["chrome", "edge", "default"], default=None, help="Target browser")
+
+    # chrome
+    p_chr = subparsers.add_parser("chrome", help="Dedicated Chrome-native controls")
+    p_chr.add_argument("action", help="Action: new_tab, close_tab, reopen_tab, next_tab, prev_tab, reload, focus_url, scroll_down, scroll_up, zoom_in, zoom_out, fullscreen, devtools, close")
+    p_chr.add_argument("param", nargs="?", default=None, help="Optional parameter (URL or reload type)")
+
+    # close / kill
+    p_cls = subparsers.add_parser("close", aliases=["kill", "terminate"], help="Close running application")
+    p_cls.add_argument("app", help="Application name or process to close")
+    p_cls.add_argument("--force", "-f", action="store_true", help="Force terminate using taskkill /F")
 
     # launch / open
     p_launch = subparsers.add_parser("launch", aliases=["open"])
@@ -3203,6 +3365,10 @@ def main():
     elif args.command in ("browse", "search", "web"):
         query_str = " ".join(args.query).strip()
         result = browse_web(query_str, browser=args.browser)
+    elif args.command == "chrome":
+        result = chrome_action(args.action, args.param)
+    elif args.command in ("close", "kill", "terminate"):
+        result = close_application(args.app, force=args.force)
     elif args.command in ("port", "check_port"):
         result = check_port(args.port_num, host=args.host)
     elif args.command == "move":

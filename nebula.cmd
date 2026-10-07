@@ -2,12 +2,12 @@
 setlocal enabledelayedexpansion
 
 REM ==============================================================================
-REM Orion v2.0 "Nebula" - Universal Autonomous Desktop & Perception Engine
+REM Orion System × Nebula Model (v2.0) - Cognitive Model CLI (Chrome Operations)
 REM ==============================================================================
 
 if "%~1"=="" (
-    python "%~dp0desktop_controller.py" console
+    python "%~dp0orion_autogen.py" help
     exit /b 0
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0orion.ps1" %*
+python "%~dp0orion_autogen.py" %*
