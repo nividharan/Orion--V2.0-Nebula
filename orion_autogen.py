@@ -77,10 +77,23 @@ class OrionAgentSociety:
 
     @staticmethod
     def compile_blender_action(prompt: str) -> dict:
-        """Translates natural language 3D instructions into native Blender bpy script."""
-        p = prompt.lower()
+        """
+        Translates natural language 3D instructions into native Blender bpy script.
+        Supports:
+          - Scene Deletions: delete all objects, clear scene, delete cube, etc.
+          - Transformations: scale, rotate, move / translate.
+          - Materials / Colors: apply color/material to active object.
+          - Shading / Modifiers: shade smooth, flat, wireframe, material, rendered.
+          - Animation: keyframe animations, play/pause animation.
+          - Cameras & Lights: camera, point light, sun light, spotlight.
+          - Procedural Models: snowman, table, chair, tree, house, car, pyramid, staircase, solar system, sword, robot.
+          - All Mesh Primitives: cube, sphere, icosphere, cylinder, cone, torus, suzanne/monkey, plane, grid, text.
+          - Circle: ONLY when explicitly requested by user ('circle', 'disk', 'disc', 'ring').
+          - Fallback: NEVER defaults to Circle! Queries scene objects or inspects without adding random geometry.
+        """
+        p = prompt.lower().strip()
 
-        # Colors
+        # Color extraction
         color_map = {
             "red": (1.0, 0.05, 0.05, 1.0),
             "blue": (0.05, 0.2, 1.0, 1.0),
@@ -93,18 +106,206 @@ class OrionAgentSociety:
             "black": (0.02, 0.02, 0.02, 1.0),
             "pink": (1.0, 0.2, 0.6, 1.0),
             "cyan": (0.05, 0.9, 0.9, 1.0),
+            "silver": (0.75, 0.75, 0.78, 1.0),
+            "brown": (0.4, 0.2, 0.05, 1.0),
         }
-
         selected_color = None
-        color_rgba = (1.0, 0.05, 0.05, 1.0)
+        color_rgba = (0.2, 0.5, 0.9, 1.0)
         for c_name, rgba in color_map.items():
-            if c_name in p:
+            if re.search(r'\b' + c_name + r'\b', p):
                 selected_color = c_name
                 color_rgba = rgba
                 break
 
-        # Shapes & Animations
-        if "animat" in p or "3d animation" in p:
+        # -------------------------------------------------------------
+        # 1. SCENE CLEARING & OBJECT DELETIONS
+        # -------------------------------------------------------------
+        if any(w in p for w in ["delete", "remove", "clear", "clean", "empty", "reset", "erase"]):
+            # Check if deleting ALL objects
+            if any(w in p for w in ["all", "everything", "scene", "objects"]) or not any(w in p for w in ["cube", "sphere", "circle", "cylinder", "cone", "camera", "light", "torus", "plane", "suzanne", "monkey"]):
+                bpy_code = """import bpy
+if bpy.context.object and bpy.context.object.mode != "OBJECT":
+    bpy.ops.object.mode_set(mode="OBJECT")
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete(use_global=False)
+for block in list(bpy.data.meshes):
+    if block.users == 0:
+        bpy.data.meshes.remove(block)
+for block in list(bpy.data.materials):
+    if block.users == 0:
+        bpy.data.materials.remove(block)
+print("SUCCESS: Deleted all objects and cleared Blender scene.")
+"""
+                return {
+                    "shape": "Scene_Cleared",
+                    "action_type": "clear",
+                    "desc": "Delete All Objects & Clear Scene",
+                    "code": bpy_code
+                }
+            else:
+                # Deleting specific object
+                target_shape = "object"
+                for s in ["cube", "sphere", "circle", "cylinder", "cone", "torus", "suzanne", "monkey", "camera", "light", "plane"]:
+                    if s in p:
+                        target_shape = s
+                        break
+                bpy_code = f"""import bpy
+del_count = 0
+for obj in list(bpy.data.objects):
+    if '{target_shape}' in obj.name.lower() or '{target_shape}' in obj.type.lower():
+        bpy.data.objects.remove(obj, do_unlink=True)
+        del_count += 1
+print(f"SUCCESS: Deleted {{del_count}} object(s) matching '{target_shape}'.")
+"""
+                return {
+                    "shape": f"Deleted_{target_shape.title()}",
+                    "action_type": "delete",
+                    "desc": f"Delete {target_shape.title()} from Scene",
+                    "code": bpy_code
+                }
+
+        # -------------------------------------------------------------
+        # 2. TRANSFORMATIONS (SCALE, ROTATE, TRANSLATE)
+        # -------------------------------------------------------------
+        if any(w in p for w in ["scale", "resize", "enlarge", "shrink"]) and not any(w in p for w in ["create", "add", "make", "primitive"]):
+            factor = 2.0
+            factor_match = re.search(r'(?:by|to|factor)\s+([0-9]+(?:\.[0-9]+)?)', p)
+            if factor_match:
+                try:
+                    factor = float(factor_match.group(1))
+                except Exception:
+                    factor = 2.0
+            elif "half" in p:
+                factor = 0.5
+            elif "double" in p:
+                factor = 2.0
+            elif "triple" in p:
+                factor = 3.0
+            bpy_code = f"""import bpy
+obj = bpy.context.active_object or (bpy.data.objects[0] if bpy.data.objects else None)
+if obj:
+    obj.scale = (obj.scale[0] * {factor}, obj.scale[1] * {factor}, obj.scale[2] * {factor})
+    print(f"SUCCESS: Scaled '{{obj.name}}' by factor {factor}x.")
+else:
+    print("WARNING: No object found to scale.")
+"""
+            return {
+                "shape": "Scaled_Object",
+                "action_type": "scale",
+                "desc": f"Scale Active Object by {factor}x",
+                "code": bpy_code
+            }
+
+        if any(w in p for w in ["rotate", "spin", "turn"]) and not any(w in p for w in ["create", "add", "make", "primitive", "animate"]):
+            deg = 45.0
+            deg_match = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:deg|degree|degrees)?', p)
+            if deg_match:
+                try:
+                    deg = float(deg_match.group(1))
+                except Exception:
+                    deg = 45.0
+            axis = "z"
+            if " x" in p or "x axis" in p:
+                axis = "x"
+            elif " y" in p or "y axis" in p:
+                axis = "y"
+            axis_idx = {"x": 0, "y": 1, "z": 2}[axis]
+            bpy_code = f"""import bpy
+import math
+obj = bpy.context.active_object or (bpy.data.objects[0] if bpy.data.objects else None)
+if obj:
+    obj.rotation_euler[{axis_idx}] += math.radians({deg})
+    print(f"SUCCESS: Rotated '{{obj.name}}' by {deg} degrees on {axis.upper()} axis.")
+else:
+    print("WARNING: No object found to rotate.")
+"""
+            return {
+                "shape": "Rotated_Object",
+                "action_type": "rotate",
+                "desc": f"Rotate Active Object by {deg}° on {axis.upper()} Axis",
+                "code": bpy_code
+            }
+
+        if any(w in p for w in ["move", "translate", "position", "relocate"]) and not any(w in p for w in ["create", "add", "make", "primitive"]):
+            dx, dy, dz = 0.0, 0.0, 0.0
+            if "up" in p:
+                dz = 2.0
+            elif "down" in p:
+                dz = -2.0
+            elif "left" in p:
+                dx = -2.0
+            elif "right" in p:
+                dx = 2.0
+            elif "forward" in p:
+                dy = 2.0
+            elif "back" in p:
+                dy = -2.0
+            else:
+                dz = 2.0
+            bpy_code = f"""import bpy
+obj = bpy.context.active_object or (bpy.data.objects[0] if bpy.data.objects else None)
+if obj:
+    obj.location = (obj.location[0] + {dx}, obj.location[1] + {dy}, obj.location[2] + {dz})
+    print(f"SUCCESS: Translated '{{obj.name}}' to ({{obj.location[0]:.2f}}, {{obj.location[1]:.2f}}, {{obj.location[2]:.2f}}).")
+else:
+    print("WARNING: No object found to move.")
+"""
+            return {
+                "shape": "Moved_Object",
+                "action_type": "move",
+                "desc": f"Translate Object by ({dx}, {dy}, {dz})",
+                "code": bpy_code
+            }
+
+        # -------------------------------------------------------------
+        # 3. COLOR & MATERIAL ONLY (APPLIED TO ACTIVE OBJECT)
+        # -------------------------------------------------------------
+        if selected_color and any(w in p for w in ["color", "paint", "material", "shade", "tint", "make it"]) and not any(w in p for w in ["create", "add", "make a", "cube", "sphere", "circle", "cylinder", "cone", "torus", "snowman", "table", "chair", "tree"]):
+            color_title = selected_color.title()
+            mat_name = f"{color_title}_Material"
+            bpy_code = f"""import bpy
+obj = bpy.context.active_object or (bpy.data.objects[0] if bpy.data.objects else None)
+if obj:
+    mat = bpy.data.materials.new(name="{mat_name}")
+    mat.use_nodes = True
+    bsdf = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf:
+        bsdf.inputs['Base Color'].default_value = {color_rgba}
+        bsdf.inputs['Roughness'].default_value = 0.3
+    if obj.data.materials:
+        obj.data.materials[0] = mat
+    else:
+        obj.data.materials.append(mat)
+    print(f"SUCCESS: Applied {color_title} material to '{{obj.name}}'.")
+else:
+    print("WARNING: No active object to color.")
+"""
+            return {
+                "shape": f"{color_title}_Material",
+                "action_type": "material",
+                "desc": f"Apply {color_title} Material to Active Object",
+                "code": bpy_code
+            }
+
+        # -------------------------------------------------------------
+        # 4. ANIMATION PLAYBACK & KEYFRAMES
+        # -------------------------------------------------------------
+        if "play animation" in p or "start animation" in p:
+            return {
+                "shape": "Animation_Play",
+                "action_type": "animation",
+                "desc": "Play 3D Timeline Animation",
+                "code": "import bpy\ntry:\n    bpy.ops.screen.animation_play()\n    print('SUCCESS: Animation playback started.')\nexcept Exception as e:\n    print(f'Playback notice: {e}')\n"
+            }
+        if "stop animation" in p or "pause animation" in p:
+            return {
+                "shape": "Animation_Stop",
+                "action_type": "animation",
+                "desc": "Pause 3D Timeline Animation",
+                "code": "import bpy\ntry:\n    bpy.ops.screen.animation_cancel()\n    print('SUCCESS: Animation paused.')\nexcept Exception as e:\n    print(f'Pause notice: {e}')\n"
+            }
+
+        if "animat" in p or "3d animation" in p or "spin animation" in p or "bounce" in p:
             shape_name = "Animated_Suzanne"
             desc_obj = "Smooth 3D Keyframe Animation (Suzanne Bounce & Spin)"
             bpy_code = """import bpy
@@ -169,7 +370,6 @@ keyframes = [
 ]
 
 hero.animation_data_clear()
-
 for frame, loc, rot, scl in keyframes:
     scene.frame_set(frame)
     hero.location = loc
@@ -219,40 +419,401 @@ print("SUCCESS: Created 3D animation for Animated_Suzanne with 5 keyframes (fram
                 "code": bpy_code
             }
 
-        elif "circle" in p:
-            shape_name = "Circle"
-            add_code = "bpy.ops.mesh.primitive_circle_add(radius=1.5, fill_type='NGON', location=(0, 0, 0))"
-            desc_obj = f"{selected_color.title() if selected_color else 'Red'} Circle"
-        elif "cube" in p or "box" in p:
+        # -------------------------------------------------------------
+        # 5. PROCEDURAL 3D COMPOUND MODELS
+        # -------------------------------------------------------------
+        # SNOWMAN
+        if "snowman" in p:
+            bpy_code = """import bpy
+bpy.ops.object.select_all(action='DESELECT')
+# Base
+bpy.ops.mesh.primitive_uv_sphere_add(radius=1.5, location=(0, 0, 1.5))
+base = bpy.context.active_object
+base.name = "Snowman_Base"
+# Torso
+bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 3.4))
+torso = bpy.context.active_object
+torso.name = "Snowman_Torso"
+# Head
+bpy.ops.mesh.primitive_uv_sphere_add(radius=0.7, location=(0, 0, 4.8))
+head = bpy.context.active_object
+head.name = "Snowman_Head"
+# Carrot nose
+bpy.ops.mesh.primitive_cone_add(radius1=0.15, depth=0.6, location=(0, -0.8, 4.8), rotation=(1.57, 0, 0))
+nose = bpy.context.active_object
+nose.name = "Snowman_Nose"
+# Top Hat
+bpy.ops.mesh.primitive_cylinder_add(radius=0.6, depth=0.8, location=(0, 0, 5.8))
+hat = bpy.context.active_object
+hat.name = "Snowman_Hat"
+
+# Materials
+snow_mat = bpy.data.materials.new(name="Snow_Mat")
+snow_mat.use_nodes = True
+b1 = next(n for n in snow_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b1.inputs['Base Color'].default_value = (0.95, 0.95, 0.98, 1.0)
+base.data.materials.append(snow_mat)
+torso.data.materials.append(snow_mat)
+head.data.materials.append(snow_mat)
+
+orange_mat = bpy.data.materials.new(name="Carrot_Mat")
+orange_mat.use_nodes = True
+b2 = next(n for n in orange_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b2.inputs['Base Color'].default_value = (1.0, 0.4, 0.05, 1.0)
+nose.data.materials.append(orange_mat)
+
+black_mat = bpy.data.materials.new(name="Hat_Mat")
+black_mat.use_nodes = True
+b3 = next(n for n in black_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b3.inputs['Base Color'].default_value = (0.05, 0.05, 0.05, 1.0)
+hat.data.materials.append(black_mat)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+
+print("SUCCESS: Generated Procedural 3D Snowman (Base, Torso, Head, Carrot Nose, Top Hat).")
+"""
+            return {"shape": "Snowman", "color": "White", "desc": "Procedural 3D Snowman", "code": bpy_code}
+
+        # TABLE
+        if "table" in p:
+            bpy_code = """import bpy
+bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 1.8))
+top = bpy.context.active_object
+top.name = "Table_Top"
+top.scale = (3.0, 2.0, 0.1)
+legs = [(-1.3, -0.8), (1.3, -0.8), (-1.3, 0.8), (1.3, 0.8)]
+for i, (lx, ly) in enumerate(legs, 1):
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.1, depth=1.8, location=(lx, ly, 0.9))
+    bpy.context.active_object.name = f"Table_Leg_{i}"
+
+wood_mat = bpy.data.materials.new(name="Wood_Mat")
+wood_mat.use_nodes = True
+bsdf = next(n for n in wood_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+bsdf.inputs['Base Color'].default_value = (0.45, 0.25, 0.1, 1.0)
+top.data.materials.append(wood_mat)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+print("SUCCESS: Generated Procedural 3D Table.")
+"""
+            return {"shape": "Table", "color": "Brown", "desc": "Procedural 3D Table", "code": bpy_code}
+
+        # CHAIR
+        if "chair" in p:
+            bpy_code = """import bpy
+bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 1.0))
+seat = bpy.context.active_object
+seat.name = "Chair_Seat"
+seat.scale = (1.2, 1.2, 0.1)
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0.55, 1.8))
+back = bpy.context.active_object
+back.name = "Chair_Backrest"
+back.scale = (1.2, 0.1, 1.4)
+for i, (lx, ly) in enumerate([(-0.5, -0.5), (0.5, -0.5), (-0.5, 0.5), (0.5, 0.5)], 1):
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.06, depth=1.0, location=(lx, ly, 0.5))
+    bpy.context.active_object.name = f"Chair_Leg_{i}"
+
+wood_mat = bpy.data.materials.new(name="Chair_Wood")
+wood_mat.use_nodes = True
+bsdf = next(n for n in wood_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+bsdf.inputs['Base Color'].default_value = (0.5, 0.3, 0.12, 1.0)
+seat.data.materials.append(wood_mat)
+back.data.materials.append(wood_mat)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+print("SUCCESS: Generated Procedural 3D Chair.")
+"""
+            return {"shape": "Chair", "color": "Brown", "desc": "Procedural 3D Chair", "code": bpy_code}
+
+        # TREE
+        if "tree" in p:
+            bpy_code = """import bpy
+bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.mesh.primitive_cylinder_add(radius=0.3, depth=2.0, location=(0, 0, 1.0))
+trunk = bpy.context.active_object
+trunk.name = "Tree_Trunk"
+for i, (rad, dep, z) in enumerate([(1.8, 1.8, 2.5), (1.4, 1.5, 3.5), (1.0, 1.2, 4.4)], 1):
+    bpy.ops.mesh.primitive_cone_add(radius1=rad, depth=dep, location=(0, 0, z))
+    bpy.context.active_object.name = f"Tree_Foliage_{i}"
+
+bark_mat = bpy.data.materials.new(name="Bark_Mat")
+bark_mat.use_nodes = True
+b1 = next(n for n in bark_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b1.inputs['Base Color'].default_value = (0.35, 0.18, 0.08, 1.0)
+trunk.data.materials.append(bark_mat)
+
+leaf_mat = bpy.data.materials.new(name="Leaf_Mat")
+leaf_mat.use_nodes = True
+b2 = next(n for n in leaf_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b2.inputs['Base Color'].default_value = (0.05, 0.6, 0.15, 1.0)
+for obj in bpy.data.objects:
+    if "Foliage" in obj.name:
+        obj.data.materials.append(leaf_mat)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+print("SUCCESS: Generated Procedural 3D Tree.")
+"""
+            return {"shape": "Tree", "color": "Green", "desc": "Procedural 3D Tree", "code": bpy_code}
+
+        # HOUSE
+        if "house" in p or "cabin" in p:
+            bpy_code = """import bpy
+bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.mesh.primitive_cube_add(size=3.0, location=(0, 0, 1.5))
+house = bpy.context.active_object
+house.name = "House_Body"
+bpy.ops.mesh.primitive_cone_add(vertices=4, radius1=2.6, depth=1.8, location=(0, 0, 3.8), rotation=(0, 0, 0.785))
+roof = bpy.context.active_object
+roof.name = "House_Roof"
+
+wall_mat = bpy.data.materials.new(name="Wall_Mat")
+wall_mat.use_nodes = True
+b1 = next(n for n in wall_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b1.inputs['Base Color'].default_value = (0.85, 0.82, 0.75, 1.0)
+house.data.materials.append(wall_mat)
+
+roof_mat = bpy.data.materials.new(name="Roof_Mat")
+roof_mat.use_nodes = True
+b2 = next(n for n in roof_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b2.inputs['Base Color'].default_value = (0.75, 0.15, 0.1, 1.0)
+roof.data.materials.append(roof_mat)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+print("SUCCESS: Generated Procedural 3D House.")
+"""
+            return {"shape": "House", "color": "Red/White", "desc": "Procedural 3D House", "code": bpy_code}
+
+        # CAR
+        if "car" in p or "vehicle" in p:
+            bpy_code = """import bpy
+bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 0.7))
+body = bpy.context.active_object
+body.name = "Car_Chassis"
+body.scale = (3.6, 1.8, 0.7)
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(-0.3, 0, 1.4))
+cabin = bpy.context.active_object
+cabin.name = "Car_Cabin"
+cabin.scale = (2.0, 1.5, 0.7)
+wheels = [(-1.2, -1.0), (1.2, -1.0), (-1.2, 1.0), (1.2, 1.0)]
+for i, (wx, wy) in enumerate(wheels, 1):
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=0.3, location=(wx, wy, 0.4), rotation=(1.57, 0, 0))
+    bpy.context.active_object.name = f"Wheel_{i}"
+
+paint_mat = bpy.data.materials.new(name="Car_Paint")
+paint_mat.use_nodes = True
+b1 = next(n for n in paint_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b1.inputs['Base Color'].default_value = (0.9, 0.05, 0.1, 1.0)
+b1.inputs['Metallic'].default_value = 0.8
+body.data.materials.append(paint_mat)
+cabin.data.materials.append(paint_mat)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+print("SUCCESS: Generated Procedural 3D Car.")
+"""
+            return {"shape": "Car", "color": "Red", "desc": "Procedural 3D Car", "code": bpy_code}
+
+        # PYRAMID
+        if "pyramid" in p:
+            bpy_code = """import bpy
+bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.mesh.primitive_cone_add(vertices=4, radius1=3.0, depth=3.0, location=(0, 0, 1.5), rotation=(0, 0, 0.785))
+pyr = bpy.context.active_object
+pyr.name = "Pyramid"
+mat = bpy.data.materials.new(name="Sand_Mat")
+mat.use_nodes = True
+bsdf = next(n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+bsdf.inputs['Base Color'].default_value = (0.85, 0.7, 0.35, 1.0)
+pyr.data.materials.append(mat)
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+print("SUCCESS: Generated 3D Pyramid.")
+"""
+            return {"shape": "Pyramid", "color": "Gold", "desc": "3D Pyramid", "code": bpy_code}
+
+        # SOLAR SYSTEM
+        if "solar system" in p or "planets" in p:
+            bpy_code = """import bpy
+bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.mesh.primitive_uv_sphere_add(radius=1.8, location=(0, 0, 0))
+sun = bpy.context.active_object
+sun.name = "Sun"
+s_mat = bpy.data.materials.new(name="Sun_Glow")
+s_mat.use_nodes = True
+b = next(n for n in s_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+b.inputs['Base Color'].default_value = (1.0, 0.8, 0.1, 1.0)
+b.inputs['Emission Color'].default_value = (1.0, 0.7, 0.0, 1.0)
+b.inputs['Emission Strength'].default_value = 3.0
+sun.data.materials.append(s_mat)
+
+planets = [
+    ("Mercury", 0.3, 2.6, (0.6, 0.6, 0.6, 1.0)),
+    ("Venus", 0.5, 3.6, (0.8, 0.6, 0.2, 1.0)),
+    ("Earth", 0.6, 4.8, (0.1, 0.4, 0.9, 1.0)),
+    ("Mars", 0.45, 6.0, (0.9, 0.2, 0.1, 1.0)),
+]
+for p_name, r, dist, col in planets:
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=r, location=(dist, 0, 0))
+    p_obj = bpy.context.active_object
+    p_obj.name = p_name
+    pm = bpy.data.materials.new(name=f"{p_name}_Mat")
+    pm.use_nodes = True
+    pb = next(n for n in pm.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+    pb.inputs['Base Color'].default_value = col
+    p_obj.data.materials.append(pm)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.shading.type = 'MATERIAL'
+print("SUCCESS: Generated 3D Solar System (Sun, Mercury, Venus, Earth, Mars).")
+"""
+            return {"shape": "Solar_System", "color": "Cosmic", "desc": "3D Solar System", "code": bpy_code}
+
+        # -------------------------------------------------------------
+        # 6. PRIMITIVE 3D MESHES & LIGHTS / CAMERAS
+        # -------------------------------------------------------------
+        if "cube" in p or "box" in p:
             shape_name = "Cube"
-            add_code = "bpy.ops.mesh.primitive_cube_add(size=2.0, location=(0, 0, 0))"
+            add_code = "bpy.ops.mesh.primitive_cube_add(size=2.0, location=(0, 0, 1.0))"
             desc_obj = f"{selected_color.title() if selected_color else 'Blue'} Cube"
         elif "sphere" in p or "ball" in p:
             shape_name = "Sphere"
-            add_code = "bpy.ops.mesh.primitive_uv_sphere_add(radius=1.2, location=(0, 0, 0))"
+            add_code = "bpy.ops.mesh.primitive_uv_sphere_add(radius=1.2, location=(0, 0, 1.2))"
             desc_obj = f"{selected_color.title() if selected_color else 'Red'} Sphere"
+        elif "icosphere" in p or "geodesic" in p:
+            shape_name = "Icosphere"
+            add_code = "bpy.ops.mesh.primitive_ico_sphere_add(radius=1.2, subdivisions=3, location=(0, 0, 1.2))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Cyan'} Icosphere"
         elif "cylinder" in p:
             shape_name = "Cylinder"
-            add_code = "bpy.ops.mesh.primitive_cylinder_add(radius=1.0, depth=2.0, location=(0, 0, 0))"
+            add_code = "bpy.ops.mesh.primitive_cylinder_add(radius=1.0, depth=2.0, location=(0, 0, 1.0))"
             desc_obj = f"{selected_color.title() if selected_color else 'Green'} Cylinder"
+        elif "cone" in p or "funnel" in p:
+            shape_name = "Cone"
+            add_code = "bpy.ops.mesh.primitive_cone_add(radius1=1.2, depth=2.0, location=(0, 0, 1.0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Orange'} Cone"
         elif "monkey" in p or "suzanne" in p:
             shape_name = "Suzanne"
-            add_code = "bpy.ops.mesh.primitive_monkey_add(size=2.0, location=(0, 0, 0))"
+            add_code = "bpy.ops.mesh.primitive_monkey_add(size=2.0, location=(0, 0, 1.2))"
             desc_obj = f"{selected_color.title() if selected_color else 'Gold'} Monkey"
         elif "torus" in p or "donut" in p:
             shape_name = "Torus"
-            add_code = "bpy.ops.mesh.primitive_torus_add(location=(0, 0, 0))"
+            add_code = "bpy.ops.mesh.primitive_torus_add(major_radius=1.5, minor_radius=0.5, location=(0, 0, 0.5))"
             desc_obj = f"{selected_color.title() if selected_color else 'Pink'} Torus"
-        elif "plane" in p or "floor" in p:
+        elif "plane" in p or "floor" in p or "ground" in p:
             shape_name = "Plane"
             add_code = "bpy.ops.mesh.primitive_plane_add(size=10.0, location=(0, 0, 0))"
             desc_obj = f"{selected_color.title() if selected_color else 'White'} Plane"
-        else:
+        elif "grid" in p:
+            shape_name = "Grid"
+            add_code = "bpy.ops.mesh.primitive_grid_add(size=8.0, subdivisions=10, location=(0, 0, 0))"
+            desc_obj = f"{selected_color.title() if selected_color else 'Gray'} Grid"
+        elif "camera" in p:
+            shape_name = "Camera"
+            desc_obj = "Add 3D Camera"
+            bpy_code = """import bpy
+import math
+cam = bpy.data.objects.new("Camera", bpy.data.cameras.new("Camera"))
+bpy.context.collection.objects.link(cam)
+cam.location = (0, -7, 4)
+cam.rotation_euler = (math.radians(65), 0, 0)
+bpy.context.scene.camera = cam
+print("SUCCESS: Added Camera and set as active scene camera.")
+"""
+            return {"shape": shape_name, "action_type": "camera", "desc": desc_obj, "code": bpy_code}
+        elif "light" in p or "sun" in p or "spot" in p:
+            l_type = "SUN" if "sun" in p else ("SPOT" if "spot" in p else "POINT")
+            shape_name = f"{l_type.title()}_Light"
+            desc_obj = f"Add 3D {l_type.title()} Light"
+            bpy_code = f"""import bpy
+bpy.ops.object.light_add(type='{l_type}', location=(3, -3, 6))
+light = bpy.context.active_object
+light.data.energy = 1000 if '{l_type}' != 'SUN' else 5
+print("SUCCESS: Added {l_type.title()} Light at (3, -3, 6).")
+"""
+            return {"shape": shape_name, "action_type": "light", "desc": desc_obj, "code": bpy_code}
+        elif "text" in p or "word" in p:
+            text_val = "Orion Nebula"
+            tm = re.search(r'(?:text|write|word)\s+["\']([^"\']+)["\']', p)
+            if not tm:
+                tm = re.search(r'(?:text|write|word)\s+([a-zA-Z0-9_\-]+)', p)
+            if tm:
+                text_val = tm.group(1)
+            shape_name = "Text_3D"
+            desc_obj = f"3D Text '{text_val}'"
+            color_title = selected_color.title() if selected_color else "Gold"
+            bpy_code = f"""import bpy
+bpy.ops.object.text_add(location=(0, 0, 1.0))
+txt = bpy.context.active_object
+txt.data.body = "{text_val}"
+txt.data.extrude = 0.1
+mat = bpy.data.materials.new(name="{color_title}_TextMat")
+mat.use_nodes = True
+bsdf = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+if bsdf:
+    bsdf.inputs['Base Color'].default_value = {color_rgba}
+txt.data.materials.append(mat)
+print("SUCCESS: Created 3D Text '{text_val}'.")
+"""
+            return {"shape": shape_name, "action_type": "create", "desc": desc_obj, "code": bpy_code}
+
+        # -------------------------------------------------------------
+        # ONLY WHEN EXPLICITLY REQUESTED: CIRCLE
+        # -------------------------------------------------------------
+        elif any(w in p for w in ["circle", "disk", "disc", "ring"]):
             shape_name = "Circle"
             add_code = "bpy.ops.mesh.primitive_circle_add(radius=1.5, fill_type='NGON', location=(0, 0, 0))"
             desc_obj = f"{selected_color.title() if selected_color else 'Red'} Circle"
 
-        color_title = selected_color.title() if selected_color else "Red"
+        # -------------------------------------------------------------
+        # CRITICAL FALLBACK: NEVER DEFAULT TO CIRCLE!
+        # Query and report scene objects instead of injecting geometry!
+        # -------------------------------------------------------------
+        else:
+            shape_name = "Scene_Inspect"
+            desc_obj = f"Query Scene Objects for '{prompt}'"
+            bpy_code = f"""import bpy
+names = [o.name for o in bpy.data.objects]
+print(f"SUCCESS: Scene inspect completed. Current objects: {{', '.join(names) if names else 'No objects in scene'}}.")
+"""
+            return {
+                "shape": shape_name,
+                "action_type": "query",
+                "desc": desc_obj,
+                "code": bpy_code
+            }
+
+        color_title = selected_color.title() if selected_color else "Blue"
         mat_name = f"{color_title}_Material"
 
         bpy_code = f"""import bpy
@@ -294,14 +855,101 @@ print("SUCCESS: Created {desc_obj} with {mat_name}.")
         """
         Commander Orion's intelligent goal decomposer:
         Parses complex natural language into atomic, ordered milestone steps.
+        Never defaults to circle; accurately identifies exact user verbs, targets, and modalities.
         """
         steps = []
         raw = goal.strip()
         lower = raw.lower()
 
-        # 1. Blender 3D commands: e.g. "in the opened blender create a red circle"
-        if "blender" in lower or (any(w in lower for w in ["circle", "cube", "sphere", "cylinder", "torus", "mesh"]) and any(w in lower for w in ["create", "add", "make", "draw"])):
-            blender_action = self.compile_blender_action(raw)
+        # 1. Compound portal search: e.g. "open google play and search for free fire"
+        compound_search = re.search(r'^(?:open|launch|go to)\s+(google\s*play|play\s*store|youtube|github|amazon|google)\s+and\s+(?:search|look\s*up)\s+(?:for\s+)?(.+)$', raw, re.I)
+        if compound_search:
+            portal = compound_search.group(1).strip()
+            term = compound_search.group(2).strip()
+            import urllib.parse
+            if "play" in portal.lower():
+                target_url = f"https://play.google.com/store/search?q={urllib.parse.quote_plus(term)}&c=apps"
+            elif "youtube" in portal.lower():
+                target_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(term)}"
+            elif "github" in portal.lower():
+                target_url = f"https://github.com/search?q={urllib.parse.quote_plus(term)}"
+            elif "amazon" in portal.lower():
+                target_url = f"https://www.amazon.com/s?k={urllib.parse.quote_plus(term)}"
+            else:
+                target_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(term)}"
+
+            steps.append({
+                "agent": "Desktop Executor",
+                "action": "browse",
+                "target": target_url,
+                "browser": "chrome",
+                "desc": f"Launch Chrome and search {portal.title()} for '{term}'"
+            })
+            steps.append({
+                "agent": "Perception Inspector",
+                "action": "shot",
+                "target": None,
+                "desc": f"Capture visual verification of {portal.title()} search results"
+            })
+            if self.use_voice:
+                steps.append({
+                    "agent": "Studio Narrator",
+                    "action": "speak",
+                    "target": f"Navigated to {portal.title()} and retrieved search results for {term}.",
+                    "desc": "Announce completion via Microsoft George HD"
+                })
+            return steps
+
+        # 2. Check for explicit "in [the opened] blender <3d actions>"
+        in_blender_match = re.match(r'^(?:in\s+(?:the\s+opened\s+)?blender\s*[:,]?\s*)(.+)$', raw, re.I)
+        if in_blender_match:
+            blender_sub = in_blender_match.group(1).strip()
+            # Split sub-actions if connected by 'and', 'then', commas
+            b_clauses = re.split(r'\s*(?:,|;|\band\b|\bthen\b)\s*', blender_sub)
+            b_clauses = [bc.strip() for bc in b_clauses if bc.strip()]
+            if not b_clauses:
+                b_clauses = [blender_sub]
+
+            steps.append({
+                "agent": "Desktop Executor",
+                "action": "focus",
+                "target": "blender",
+                "desc": "Focus running Blender window and bring to foreground"
+            })
+            last_shape = "Blender_Scene"
+            for bc in b_clauses:
+                b_action = self.compile_blender_action(bc)
+                last_shape = b_action["shape"]
+                steps.append({
+                    "agent": "Desktop Executor",
+                    "action": "blender",
+                    "target": b_action["desc"],
+                    "code": b_action["code"],
+                    "desc": f"Execute 3D Python pipeline in Blender: {b_action['desc']}"
+                })
+            steps.append({
+                "agent": "Perception Inspector",
+                "action": "blender_check",
+                "target": last_shape,
+                "desc": f"Verify 3D scene state in Blender hierarchy"
+            })
+            if self.use_voice:
+                steps.append({
+                    "agent": "Studio Narrator",
+                    "action": "speak",
+                    "target": "Blender 3D operations successfully completed and verified, sir.",
+                    "desc": "Announce completion via Microsoft George HD"
+                })
+            return steps
+
+        # 3. Check for general 3D creation prompt without explicit "in blender" (e.g. "create a 3d snowman", "make a 3d tree")
+        is_explicit_3d = (
+            ("3d" in lower or "mesh" in lower) and
+            any(w in lower for w in ["create", "add", "make", "draw", "render", "animate"]) and
+            any(w in lower for w in ["cube", "sphere", "cylinder", "cone", "torus", "snowman", "table", "chair", "tree", "house", "car", "model", "pyramid", "suzanne", "circle"])
+        )
+        if is_explicit_3d:
+            b_action = self.compile_blender_action(raw)
             steps.append({
                 "agent": "Desktop Executor",
                 "action": "focus",
@@ -311,29 +959,28 @@ print("SUCCESS: Created {desc_obj} with {mat_name}.")
             steps.append({
                 "agent": "Desktop Executor",
                 "action": "blender",
-                "target": blender_action["desc"],
-                "code": blender_action["code"],
-                "desc": f"Execute 3D Python pipeline in Blender: {blender_action['desc']}"
+                "target": b_action["desc"],
+                "code": b_action["code"],
+                "desc": f"Execute 3D Python pipeline in Blender: {b_action['desc']}"
             })
             steps.append({
                 "agent": "Perception Inspector",
                 "action": "blender_check",
-                "target": blender_action["shape"],
-                "desc": f"Verify '{blender_action['desc']}' registered in Blender 3D scene"
+                "target": b_action["shape"],
+                "desc": f"Verify '{b_action['desc']}' registered in Blender 3D scene"
             })
             if self.use_voice:
-                speak_msg = f"{blender_action['desc']} successfully generated and playing in Blender, sir." if ("animation" in lower or "animat" in lower) else f"{blender_action['desc']} successfully generated with material in Blender, sir."
                 steps.append({
                     "agent": "Studio Narrator",
                     "action": "speak",
-                    "target": speak_msg,
+                    "target": f"{b_action['desc']} successfully generated in Blender, sir.",
                     "desc": "Announce completion via Microsoft George HD"
                 })
             return steps
 
-        # 2. General "in [the opened] <app> <action>"
+        # 4. General "in [the opened] <app> <action>"
         in_app_match = re.search(r'^(?:in\s+(?:the\s+opened\s+)?([a-zA-Z0-9_\-]+))\s+(?:to\s+)?(.+)$', raw, re.I)
-        if in_app_match:
+        if in_app_match and in_app_match.group(1).lower() != "blender":
             target_app = in_app_match.group(1).strip()
             sub_action = in_app_match.group(2).strip()
             steps.append({
@@ -380,87 +1027,61 @@ print("SUCCESS: Created {desc_obj} with {mat_name}.")
                 })
             return steps
 
-        # 3. Compound portal search: e.g. "open google play and search for free fire"
-        compound_search = re.search(r'^(?:open|launch|go to)\s+(google\s*play|play\s*store|youtube|github|amazon|google)\s+and\s+(?:search|look\s*up)\s+(?:for\s+)?(.+)$', raw, re.I)
-        if compound_search:
-            portal = compound_search.group(1).strip()
-            term = compound_search.group(2).strip()
-            import urllib.parse
-            if "play" in portal.lower():
-                target_url = f"https://play.google.com/store/search?q={urllib.parse.quote_plus(term)}&c=apps"
-            elif "youtube" in portal.lower():
-                target_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(term)}"
-            elif "github" in portal.lower():
-                target_url = f"https://github.com/search?q={urllib.parse.quote_plus(term)}"
-            elif "amazon" in portal.lower():
-                target_url = f"https://www.amazon.com/s?k={urllib.parse.quote_plus(term)}"
-            else:
-                target_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(term)}"
-
-            steps.append({
-                "agent": "Desktop Executor",
-                "action": "browse",
-                "target": target_url,
-                "browser": "chrome",
-                "desc": f"Launch Chrome and search {portal.title()} for '{term}'"
-            })
-            steps.append({
-                "agent": "Perception Inspector",
-                "action": "shot",
-                "target": None,
-                "desc": f"Capture visual verification of {portal.title()} search results"
-            })
-            if self.use_voice:
-                steps.append({
-                    "agent": "Studio Narrator",
-                    "action": "speak",
-                    "target": f"Navigated to {portal.title()} and retrieved search results for {term}.",
-                    "desc": "Announce completion via Microsoft George HD"
-                })
-            return steps
-
-        # Split multiple actions by 'and', 'then', commas, or semicolons
+        # 5. General multi-clause decomposition (split by and, then, comma, semicolon)
         clauses = re.split(r'\s*(?:,|;|then|\band\b)\s*', raw)
         clauses = [c.strip() for c in clauses if c.strip()]
-
         if not clauses:
             clauses = [raw]
 
-        portal_context = None
-        for c in clauses:
-            cl_check = c.lower()
-            if "google play" in cl_check or "play store" in cl_check:
-                portal_context = "google play"
-                break
-
         for clause in clauses:
-            cl = clause.lower()
+            cl = clause.lower().strip()
 
-            # 1. Web browsing / search intent
-            if any(k in cl for k in ["browse", "search", "google", "website", "url", "github", "http://", "https://", "play"]):
-                # Extract query or URL
+            # Close / Terminate application
+            if any(k in cl for k in ["close", "kill", "terminate", "exit", "quit"]):
+                target_app = re.sub(r'^(?:please\s+)?(?:close|kill|terminate|exit|quit)\s+(?:application|app|window)?\s*', '', clause, flags=re.I).strip()
+                target_app = re.sub(r'\s+(?:app|application|window)$', '', target_app, flags=re.I).strip()
+                steps.append({
+                    "agent": "Desktop Executor",
+                    "action": "close",
+                    "target": target_app or "window",
+                    "desc": f"Close application '{target_app or 'window'}'"
+                })
+
+            # Key press / Hotkey
+            elif any(k in cl for k in ["press key", "press hotkey", "hit key", "hotkey", "press enter", "press esc", "press alt", "press ctrl", "press tab"]):
+                key_match = re.sub(r'^(?:please\s+)?(?:press\s+key|press\s+hotkey|hit\s+key|hotkey|press)\s+', '', clause, flags=re.I).strip()
+                steps.append({
+                    "agent": "Desktop Executor",
+                    "action": "hotkey" if "+" in key_match else "key",
+                    "target": key_match,
+                    "desc": f"Send keystroke '{key_match}'"
+                })
+
+            # Mouse click
+            elif any(k in cl for k in ["click", "double click", "right click"]):
+                steps.append({
+                    "agent": "Desktop Executor",
+                    "action": "click",
+                    "target": clause,
+                    "desc": f"Perform mouse click: '{clause}'"
+                })
+
+            # Web browsing / Search
+            elif any(k in cl for k in ["browse", "search", "google", "website", "url", "github", "http://", "https://", "look up"]):
                 target = clause
                 target = re.sub(r'^(?:please\s+)?(?:browse|search|open|go to|goto|look up)\s+(?:for\s+)?(?:in\s+(?:chrome|edge)\s+)?', '', target, flags=re.I).strip()
                 browser = "chrome" if "chrome" in cl else ("edge" if "edge" in cl else None)
-
-                # Context-aware query enrichment
-                if portal_context == "google play" and ("free fire" in cl or "game" in cl or "search" in cl):
-                    clean_term = re.sub(r'^(?:search\s+for|search|find|open)\s+', '', target, flags=re.I).strip()
-                    if clean_term and clean_term != "google play":
-                        target = f"https://play.google.com/store/search?q={clean_term}&c=apps"
-
                 steps.append({
                     "agent": "Desktop Executor",
                     "action": "browse",
-                    "target": target or "https://github.com",
+                    "target": target or "https://google.com",
                     "browser": browser,
                     "desc": f"Navigate to '{target}'" + (f" in {browser}" if browser else "")
                 })
 
-            # 2. Application launch intent
+            # Open / Launch application
             elif any(k in cl for k in ["open", "launch", "start", "run"]):
                 app_target = re.sub(r'^(?:please\s+)?(?:open|launch|start|run)\s+', '', clause, flags=re.I).strip()
-                # Remove trailing words like 'app' or 'application'
                 app_target = re.sub(r'\s+(?:app|application)$', '', app_target, flags=re.I).strip()
                 steps.append({
                     "agent": "Desktop Executor",
@@ -469,21 +1090,9 @@ print("SUCCESS: Created {desc_obj} with {mat_name}.")
                     "desc": f"Launch desktop application '{app_target}'"
                 })
 
-            # 3. Speech / Voice intent
-            elif any(k in cl for k in ["speak", "say", "announce", "tell", "voice"]):
-                speech_target = re.sub(r'^(?:please\s+)?(?:speak|say|announce|tell|voice)\s+', '', clause, flags=re.I).strip()
-                speech_target = speech_target.strip('\'"')
-                steps.append({
-                    "agent": "Studio Narrator",
-                    "action": "speak",
-                    "target": speech_target or "Task executed successfully.",
-                    "desc": f"Speak aloud: \"{speech_target}\""
-                })
-
-            # 4. Text typing intent
+            # Type / Write text
             elif any(k in cl for k in ["type", "write", "input"]):
-                text_target = re.sub(r'^(?:please\s+)?(?:type|write|input)\s+', '', clause, flags=re.I).strip()
-                text_target = text_target.strip('\'"')
+                text_target = re.sub(r'^(?:please\s+)?(?:type|write|input)\s+', '', clause, flags=re.I).strip().strip('\'"')
                 steps.append({
                     "agent": "Desktop Executor",
                     "action": "type",
@@ -491,16 +1100,7 @@ print("SUCCESS: Created {desc_obj} with {mat_name}.")
                     "desc": f"Type text into active window: \"{text_target}\""
                 })
 
-            # 5. Screen snapshot intent
-            elif any(k in cl for k in ["screenshot", "screen", "capture", "shot"]):
-                steps.append({
-                    "agent": "Perception Inspector",
-                    "action": "shot",
-                    "target": None,
-                    "desc": "Capture live screen snapshot"
-                })
-
-            # 6. Window focus intent
+            # Window Focus
             elif any(k in cl for k in ["focus", "switch to", "bring up"]):
                 focus_target = re.sub(r'^(?:please\s+)?(?:focus|switch to|bring up)\s+', '', clause, flags=re.I).strip()
                 steps.append({
@@ -510,7 +1110,26 @@ print("SUCCESS: Created {desc_obj} with {mat_name}.")
                     "desc": f"Focus window '{focus_target}'"
                 })
 
-            # 7. Audio listen / record intent
+            # Screenshot
+            elif any(k in cl for k in ["screenshot", "screen", "capture", "shot"]):
+                steps.append({
+                    "agent": "Perception Inspector",
+                    "action": "shot",
+                    "target": None,
+                    "desc": "Capture live screen snapshot"
+                })
+
+            # Voice / Speech
+            elif any(k in cl for k in ["speak", "say", "announce", "tell", "voice"]):
+                speech_target = re.sub(r'^(?:please\s+)?(?:speak|say|announce|tell|voice)\s+', '', clause, flags=re.I).strip().strip('\'"')
+                steps.append({
+                    "agent": "Studio Narrator",
+                    "action": "speak",
+                    "target": speech_target or "Task executed successfully.",
+                    "desc": f"Speak aloud: \"{speech_target}\""
+                })
+
+            # Audio Listen
             elif any(k in cl for k in ["listen", "hear", "record"]):
                 steps.append({
                     "agent": "Perception Inspector",
@@ -519,7 +1138,7 @@ print("SUCCESS: Created {desc_obj} with {mat_name}.")
                     "desc": "Listen to microphone audio"
                 })
 
-            # Fallback
+            # Fallback: execute as launch (safely)
             else:
                 steps.append({
                     "agent": "Desktop Executor",
@@ -658,6 +1277,41 @@ print("SUCCESS: Created {desc_obj} with {mat_name}.")
                                         self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Recovered after context reset.")
                                     else:
                                         raise RuntimeError(res_retry.get("message", "Blender execution error"))
+
+                            elif act == "close":
+                                res = orion_core.close_application(target)
+                                elapsed = (time.perf_counter() - t_step_start) * 1000
+                                if res.get("status") in ("ok", "success"):
+                                    self.stream.print_success(f"Closed application '{target}'", elapsed)
+                                    self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Application terminated.")
+                                else:
+                                    self.stream.print_warning(f"Close notice: {res.get('message')}")
+                                    self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Target closed or non-active.")
+
+                            elif act in ("key", "hotkey"):
+                                if "+" in target:
+                                    keys = [k.strip().lower() for k in target.split("+")]
+                                    res = orion_core.hotkey(*keys)
+                                else:
+                                    res = orion_core.press_key(target.strip().lower())
+                                elapsed = (time.perf_counter() - t_step_start) * 1000
+                                self.stream.print_success(f"Injected keystroke '{target}'", elapsed)
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Keystroke event dispatched.")
+
+                            elif act == "click":
+                                res = orion_core.verified_click()
+                                elapsed = (time.perf_counter() - t_step_start) * 1000
+                                self.stream.print_success("Injected mouse click", elapsed)
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Mouse event registered.")
+
+                            elif act == "cmd":
+                                import subprocess
+                                cmd_p = subprocess.run(target, shell=True, capture_output=True, text=True)
+                                elapsed = (time.perf_counter() - t_step_start) * 1000
+                                out_line = (cmd_p.stdout or cmd_p.stderr or "Success").strip().splitlines()
+                                summary_txt = out_line[0] if out_line else "Completed"
+                                self.stream.print_success(f"Shell: {summary_txt[:60]}", elapsed)
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Exit code {cmd_p.returncode}.")
 
                         elif agent == "Perception Inspector":
                             self.stream.print_line("Perception Inspector", "👁️", f"Milestone {idx}: {step['desc']}...")

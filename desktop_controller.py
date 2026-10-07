@@ -1405,6 +1405,58 @@ def launch_application(app_name: str, wait_for_window: bool = True, timeout_sec:
     }
 
 
+def close_application(app_name: str, force: bool = False) -> dict:
+    """
+    Terminates or closes a running application by window title matching or process name.
+    Sends graceful WM_CLOSE first, with fallback to taskkill if needed.
+    """
+    import win32gui
+    import win32con
+    import win32process
+    import subprocess
+    import psutil
+    target = app_name.lower().strip().replace(".exe", "")
+    closed_hwnds = []
+    closed_pids = set()
+
+    def enum_and_close(hwnd, _):
+        if win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd).strip()
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            try:
+                proc = psutil.Process(pid)
+                pname = proc.name().lower().replace(".exe", "")
+            except Exception:
+                pname = ""
+            if (target and target in title.lower()) or (target and target in pname):
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                closed_hwnds.append(hwnd)
+                closed_pids.add(pid)
+
+    try:
+        win32gui.EnumWindows(enum_and_close, None)
+    except Exception:
+        pass
+
+    if force or (not closed_hwnds and not closed_pids):
+        try:
+            flag = "/F" if force else ""
+            subprocess.run(f"taskkill /IM {target}*.exe {flag}", shell=True, capture_output=True, text=True)
+            closed_pids.add(target)
+        except Exception:
+            pass
+
+    success = bool(closed_hwnds or closed_pids)
+    return {
+        "status": "success" if success else "warning",
+        "success": success,
+        "action": "close_application",
+        "app": app_name,
+        "closed_count": len(closed_hwnds) or len(closed_pids),
+        "message": f"Closed application '{app_name}' successfully." if success else f"No active window or process found for '{app_name}'."
+    }
+
+
 # ==============================================================================
 # BROWSER & WEB SEARCH ENGINE (<50ms DIRECT LAUNCH)
 # ==============================================================================

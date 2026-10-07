@@ -170,13 +170,19 @@ orion heal                                      # Diagnostic scan: auto-dismisse
 ```powershell
 # Run with 5-agent collaborative team (with continuous perception & auto-healing)
 orion team "open chrome to https://github.com, launch notepad, and announce status"
+orion team "open google play and search for free fire"
 
-# Native Blender 3D automation over local socket port 9876
-orion team "in the opened blender create a red circle"
-orion team "in the opened blender create a blue cube"
+# Native Blender 3D multi-step workflows (zero default circle lock)
+orion team "in blender delete all objects and add a blue cube"
+orion team "in blender create a snowman"
+orion team "in blender add a green cylinder and a red cone"
+orion team "in blender rotate the active object by 90 degrees"
+orion team "in blender change color to gold"
+orion team "in blender play animation"
 
-# General in-app natural language actions
-orion "in notepad type Hello Orion, and announce completion"
+# General desktop application & window control
+orion team "open notepad and write Hello Orion"
+orion team "close blender"
 ```
 
 ### Microphone Audio Input & Speech
