@@ -18,6 +18,15 @@ from .page_watcher import (
     calculate_visual_diff_pct,
 )
 
+from .screen_watcher import (
+    ScreenWatcher,
+    ActionPerceptionResult,
+)
+from .gemini_vision import (
+    GeminiVisionClient,
+    VisionRemediation,
+)
+
 __all__ = [
     "PlaybackState",
     "verify_playback",
@@ -30,4 +39,8 @@ __all__ = [
     "WatchResult",
     "Verdict",
     "calculate_visual_diff_pct",
+    "ScreenWatcher",
+    "ActionPerceptionResult",
+    "GeminiVisionClient",
+    "VisionRemediation",
 ]

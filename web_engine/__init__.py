@@ -12,6 +12,10 @@ from .pages.base_page import BasePage
 from .pages.portal_search_page import PortalSearchPage
 from .pages.catalog_scraper_page import CatalogScraperPage
 
+from .human_interactions import HumanInteractions
+from .auth_manager import AuthManager
+from .checkout_guard import CheckoutGuard
+
 __all__ = [
     "BrowserConfig",
     "DEFAULT_CONFIG",
@@ -20,6 +24,9 @@ __all__ = [
     "BasePage",
     "PortalSearchPage",
     "CatalogScraperPage",
+    "HumanInteractions",
+    "AuthManager",
+    "CheckoutGuard",
     "WebEngineError",
     "SelectorNotFoundError",
     "SessionExpiredError",
