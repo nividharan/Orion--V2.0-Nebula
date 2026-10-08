@@ -110,6 +110,12 @@ INJECTION_PATTERNS = [
 
 def _normalize_tamil_query(s: str) -> str:
     """Translates colloquial Tamil browser/song commands into canonical English commands."""
+    # Skip normalization if the text already starts with a clear English command verb.
+    _english_verb_prefix = ("play ", "search ", "open ", "go to ", "navigate ", "browse ",
+                            "scroll ", "close ", "next ", "prev ", "reload ", "find ", "show ")
+    if any(s.startswith(v) for v in _english_verb_prefix):
+        return s
+
     has_play_verb = any(w in s for w in ["podu", "vilayadu", "kaattu", "kaatu", "vei"])
     has_media_noun = any(w in s for w in ["paatu", "paadal", "padam", "trailer", "melodies", "song"])
     has_youtube = "youtube" in s or "la" in s
@@ -122,6 +128,7 @@ def _normalize_tamil_query(s: str) -> str:
         if clean_s:
             return f"play {clean_s} on youtube"
     return s
+
 
 
 def clean_input(text: str) -> str:
