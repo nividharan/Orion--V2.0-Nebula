@@ -21,7 +21,7 @@ from enum import Enum
 from typing import Optional, Dict, Any, List, Set
 from dataclasses import dataclass, field
 
-from schemas import Plan, Step, ActionType
+from schemas import Plan, Step, ActionType, IntentType
 from nebula_brain import NebulaBrain
 from .typed_tools import ToolRegistry
 
@@ -46,6 +46,7 @@ ROLE_TOOL_ALLOW_LIST: Dict[AgentRole, Set[str]] = {
     AgentRole.VERIFIER: {
         "media_verify_playback",
         "media_heal_playback",
+        "web_verify_page",
         "web_screenshot",
     },
 }
@@ -185,20 +186,27 @@ class SocietyCoordinator:
 
         # Step 3: Verifier evaluates completion and heals if needed
         self.safeguards.check_kill_switch()
-        verifier_tool = "media_verify_playback"
-        self.safeguards.authorize_tool(AgentRole.VERIFIER, verifier_tool)
+        if plan.intent in (IntentType.MEDIA_PLAY, IntentType.MEDIA_PLAYBACK):
+            verifier_tool = "media_verify_playback"
+            self.safeguards.authorize_tool(AgentRole.VERIFIER, verifier_tool)
 
-        verify_fn = ToolRegistry.get(verifier_tool)
-        verify_res = await verify_fn(page=page)
-        v_state = verify_res.get("state", {})
+            verify_fn = ToolRegistry.get(verifier_tool)
+            verify_res = await verify_fn(page=page)
+            v_state = verify_res.get("state", {})
 
-        # Self-healing if needed
-        if not v_state.get("is_playing", True):
-            heal_tool = "media_heal_playback"
-            self.safeguards.authorize_tool(AgentRole.VERIFIER, heal_tool)
-            heal_fn = ToolRegistry.get(heal_tool)
-            heal_res = await heal_fn(page=page)
-            v_state = heal_res.get("state", v_state)
+            # Self-healing if needed
+            if not v_state.get("is_playing", True):
+                heal_tool = "media_heal_playback"
+                self.safeguards.authorize_tool(AgentRole.VERIFIER, heal_tool)
+                heal_fn = ToolRegistry.get(heal_tool)
+                heal_res = await heal_fn(page=page)
+                v_state = heal_res.get("state", v_state)
+        else:
+            verifier_tool = "web_verify_page"
+            self.safeguards.authorize_tool(AgentRole.VERIFIER, verifier_tool)
+            verify_fn = ToolRegistry.get(verifier_tool)
+            verify_res = await verify_fn(page=page)
+            v_state = verify_res
 
         elapsed = (time.perf_counter() - start) * 1000
         return SocietyResult(

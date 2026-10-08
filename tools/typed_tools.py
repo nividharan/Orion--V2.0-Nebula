@@ -23,6 +23,11 @@ from verify.playback import (
     capture_playback_viewport_safe,
     PlaybackState,
 )
+from verify.page_watcher import (
+    PageWatcher,
+    Verdict,
+    WatchResult,
+)
 
 logger = logging.getLogger("Orion.TypedTools")
 
@@ -232,6 +237,47 @@ async def desktop_announce(message: str) -> Dict[str, Any]:
     return {"success": True, "message": message}
 
 
+async def web_verify_page(
+    page=None,
+    before_screenshot: Optional[bytes] = None,
+    after_screenshot: Optional[bytes] = None,
+    expect_visual_change: bool = False,
+) -> Dict[str, Any]:
+    """
+    Performs perception and DOM verification on the active page via PageWatcher.
+    Detects error pages, blocking dialogs/modals, login redirects, and visual stalls.
+
+    Args:
+        page: Optional active Playwright Page instance.
+        before_screenshot: Optional before-action screenshot bytes for visual diff.
+        after_screenshot: Optional after-action screenshot bytes for visual diff.
+        expect_visual_change: Whether visual mutation was expected.
+
+    Returns:
+        Dict containing verdict (ok, fail, uncertain), signal, and evidence.
+    """
+    if page is None:
+        return {
+            "success": True,
+            "simulated": True,
+            "verdict": Verdict.OK.value,
+            "signal": "ok",
+            "evidence": {"detail": "Simulated DOM verification ok"},
+        }
+
+    watcher = PageWatcher()
+    result: WatchResult = watcher.verify_action_result(
+        page,
+        before_screenshot=before_screenshot,
+        after_screenshot=after_screenshot,
+        expect_visual_change=expect_visual_change,
+    )
+    return {
+        "success": result.verdict == Verdict.OK,
+        **result.to_dict(),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tool Registry
 # ---------------------------------------------------------------------------
@@ -245,6 +291,7 @@ class ToolRegistry:
         "media_resolve_and_play": media_resolve_and_play,
         "media_verify_playback": media_verify_playback,
         "media_heal_playback": media_heal_playback,
+        "web_verify_page": web_verify_page,
         "web_screenshot": web_screenshot,
         "desktop_announce": desktop_announce,
     }

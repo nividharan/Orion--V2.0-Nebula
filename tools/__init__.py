@@ -11,6 +11,7 @@ from .typed_tools import (
     media_resolve_and_play,
     media_verify_playback,
     media_heal_playback,
+    web_verify_page,
     web_screenshot,
     desktop_announce,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "media_resolve_and_play",
     "media_verify_playback",
     "media_heal_playback",
+    "web_verify_page",
     "web_screenshot",
     "desktop_announce",
     "AgentRole",

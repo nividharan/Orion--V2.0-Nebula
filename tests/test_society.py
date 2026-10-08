@@ -30,6 +30,7 @@ from tools import (
     media_resolve_and_play,
     media_verify_playback,
     media_heal_playback,
+    web_verify_page,
     web_screenshot,
     desktop_announce,
     AgentRole,
@@ -74,6 +75,11 @@ class TestTypedTools(unittest.IsolatedAsyncioTestCase):
         h_res = await media_heal_playback()
         self.assertTrue(h_res["success"])
 
+    async def test_web_verify_page_simulation(self):
+        res = await web_verify_page()
+        self.assertTrue(res["success"])
+        self.assertEqual(res["verdict"], "ok")
+
     async def test_desktop_announce(self):
         res = await desktop_announce("Task complete")
         self.assertTrue(res["success"])
@@ -89,6 +95,7 @@ class TestTypedTools(unittest.IsolatedAsyncioTestCase):
             "web_navigate",
             "web_screenshot",
             "web_search",
+            "web_verify_page",
         ]
         self.assertEqual(tools, expected)
 
@@ -114,6 +121,7 @@ class TestAgentSafeguards(unittest.TestCase):
         # Should not raise
         self.safeguards.authorize_tool(AgentRole.VERIFIER, "media_verify_playback")
         self.safeguards.authorize_tool(AgentRole.VERIFIER, "media_heal_playback")
+        self.safeguards.authorize_tool(AgentRole.VERIFIER, "web_verify_page")
 
     def test_kill_switch_blocks_execution(self):
         self.safeguards.kill_switch_active = True
@@ -192,6 +200,27 @@ class TestSocietyCoordinator(unittest.IsolatedAsyncioTestCase):
         coordinator.trigger_kill_switch()
         with self.assertRaises(KillSwitchTriggeredError):
             await coordinator.execute_task("test goal")
+
+    async def test_web_navigation_task_routes_to_web_verify_page(self):
+        mock_plan = Plan(
+            intent=IntentType.WEB_TASK,
+            confidence=1.0,
+            target_app="chrome",
+            steps=[
+                Step(action=ActionType.BROWSE, target="https://www.google.com"),
+                Step(action=ActionType.SPEAK, target="Navigation complete"),
+            ]
+        )
+        brain = MagicMock()
+        brain.stats = {"api_calls": 1}
+        brain.plan.return_value = mock_plan
+
+        coordinator = SocietyCoordinator(brain=brain)
+        res = await coordinator.execute_task("open google")
+        self.assertTrue(res.success)
+        self.assertEqual(res.steps_executed, 2)
+        self.assertIn("verdict", res.verification_state)
+        self.assertEqual(res.verification_state["verdict"], "ok")
 
 
 if __name__ == "__main__":
