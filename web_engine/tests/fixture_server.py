@@ -181,6 +181,24 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(POPUP_HTML.encode("utf-8"))
             return
 
+        if self.path == "/video":
+            video_html = """<!DOCTYPE html><html><head><title>Fixture Video Player</title></head><body><h1>Fixture Player</h1><video id="video-elem" width="320" height="240" controls><source src="data:video/mp4;base64," type="video/mp4"></video><button id="next-btn">Next</button></body></html>"""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(video_html.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(video_html.encode("utf-8"))
+            return
+
+        if self.path == "/shop":
+            shop_html = """<!DOCTYPE html><html><head><title>Fixture Shop</title></head><body><h1>Fixture Shop</h1><p>Items in cart: 1</p><button id="place-order-btn">Place order</button></body></html>"""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(shop_html.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(shop_html.encode("utf-8"))
+            return
+
         if self.path == "/session-check":
             cookie_header = self.headers.get("Cookie", "")
             if "session_token=active_valid_session" in cookie_header:

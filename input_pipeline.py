@@ -386,3 +386,11 @@ class InputPipeline:
             plan=final_plan,
             requires_approval=False
         )
+
+
+def process_input(
+    raw_input: Union[str, CapturedInput],
+    context: Optional[ConversationContext] = None
+) -> PipelineResult:
+    """Convenience helper: processes input through InputPipeline."""
+    return InputPipeline().process(raw_input, context=context)

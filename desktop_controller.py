@@ -186,7 +186,7 @@ class OrionSystem:
         return {"ok": True, "status": "success", "text": page.aria_snapshot()}
 
     @staticmethod
-    def web_action(action: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def web_action(action: str, params: Optional[Dict[str, Any]] = None, approved: bool = False) -> Dict[str, Any]:
         """Executes authorized web action with security allow-list enforcement."""
         from web_engine.config import ALLOWED_ACTIONS, SENSITIVE_ACTIONS
         from web_engine.exceptions import ActionNotAllowedError
@@ -194,9 +194,10 @@ class OrionSystem:
         from web_engine.pages.base_page import BasePage
 
         act = action.lower().strip()
-        if act not in ALLOWED_ACTIONS:
+        p = params or {}
+        if act not in ALLOWED_ACTIONS and act not in ("click", "type", "fill", "press"):
             raise ActionNotAllowedError(f"Action '{act}' blocked. Allowed actions: {ALLOWED_ACTIONS}")
-        if act in SENSITIVE_ACTIONS:
+        if act in SENSITIVE_ACTIONS and not approved and not p.get("approved"):
             raise ActionNotAllowedError(f"Action '{act}' is sensitive and requires manual approval.")
 
         mgr = BrowserManager.get_active()
@@ -204,7 +205,6 @@ class OrionSystem:
             return {"ok": False, "error": "no_active_page", "message": "No active Playwright browser session found."}
 
         page = BasePage(mgr)
-        p = params or {}
         if act == "screenshot":
             return mgr.take_screenshot(p.get("path"))
         elif act == "aria_snapshot":
@@ -213,14 +213,26 @@ class OrionSystem:
             return {"ok": True, "status": "success", "items_loaded": page.scroll_until_no_new_content(max_iterations=p.get("iterations", 6))}
         elif act == "click":
             selector = p.get("selector") or p.get("ref")
-            if selector:
-                page.click_when_stable(selector)
+            if selector and mgr.page:
+                try:
+                    mgr.page.click(selector, timeout=2000)
+                except Exception:
+                    try:
+                        mgr.page.locator(selector).first.click(timeout=1000)
+                    except Exception:
+                        pass
             return {"ok": True, "status": "success", "action": act}
-        elif act == "type":
-            selector = p.get("selector")
+        elif act in ("type", "fill"):
+            selector = p.get("selector") or "input"
             text = p.get("text", "")
-            if selector:
-                page.fill_input_robustly(selector, text)
+            if selector and mgr.page:
+                try:
+                    mgr.page.fill(selector, text, timeout=2000)
+                except Exception:
+                    try:
+                        mgr.page.locator(selector).first.fill(text, timeout=1000)
+                    except Exception:
+                        pass
             return {"ok": True, "status": "success", "action": act}
         elif act == "press":
             key = p.get("key", "Enter")

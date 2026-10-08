@@ -41,6 +41,7 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset({
     'x.com', 'twitter.com',
     'udemy.com', 'www.udemy.com',
     'linkedin.com', 'www.linkedin.com',
+    '127.0.0.1', 'localhost',
     'notepad',   # desktop target, not a URL
     'chrome',
     'explorer',
@@ -155,8 +156,8 @@ class Step(BaseModel):
         if v.startswith('http://') or v.startswith('https://'):
             try:
                 parsed = urllib.parse.urlparse(v)
-                host = parsed.netloc.lower()
-                if host not in ALLOWED_DOMAINS:
+                host = (parsed.hostname or parsed.netloc).lower()
+                if host not in ALLOWED_DOMAINS and parsed.netloc.lower() not in ALLOWED_DOMAINS:
                     raise ValueError(
                         f"Domain '{host}' is not in ALLOWED_DOMAINS. "
                         f"Add it explicitly if this site should be accessible."

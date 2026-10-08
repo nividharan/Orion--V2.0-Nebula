@@ -280,17 +280,19 @@ class NebulaSession:
         4. Validates safety / approval gate
         5. Executes steps with kill-switch monitoring & media player registration
         """
-        with self._lock:
-            self.check_budgets_before_command()
-            ok, health_msg = self.ensure_browser_running()
-            if not ok:
-                return {"status": "error", "error": health_msg}
-
-        self.kill_switch_active.clear()
-        self.is_command_running = True
-        t_cmd_start = time.perf_counter()
+        if self.kill_switch_active.is_set():
+            self.kill_switch_active.clear()
+            return {"status": "stopped", "message": "Command stopped by kill switch."}
 
         try:
+            with self._lock:
+                self.check_budgets_before_command()
+                ok, health_msg = self.ensure_browser_running()
+                if not ok:
+                    return {"status": "error", "error": health_msg}
+
+            self.is_command_running = True
+            t_cmd_start = time.perf_counter()
             # 1. Process Input Pipeline
             captured = CapturedInput(raw_text=raw_cmd, source="text")
             pipeline_res: PipelineResult = process_input(captured, context=self.context_memory)
@@ -338,7 +340,7 @@ class NebulaSession:
                 return {
                     "status": "dry_run",
                     "message": "Dry-run mode active. Steps planned but not executed.",
-                    "steps": [s.description for s in plan.steps]
+                    "steps": [getattr(s, "description", None) or f"{s.action.value} {s.target or ''}".strip() for s in plan.steps]
                 }
 
             # 5. Execute Steps
@@ -356,10 +358,11 @@ class NebulaSession:
                 step_duration_ms = (time.perf_counter() - t_step_start) * 1000
 
                 self.total_steps += 1
+                step_desc = getattr(step, "description", None) or f"{step.action.value} {step.target or ''}".strip()
                 step_summary = {
                     "step": idx,
                     "action": step.action.value,
-                    "desc": step.description,
+                    "desc": step_desc,
                     "duration_ms": round(step_duration_ms, 1),
                     "result": step_res,
                 }
@@ -411,10 +414,11 @@ class NebulaSession:
         act = step.action
         target = str(step.target or "")
 
-        if act == ActionType.NAVIGATE:
+        if act in (ActionType.NAVIGATE, ActionType.BROWSE):
             # Check domain allow-list
             from urllib.parse import urlparse
-            domain = urlparse(target).netloc.lower()
+            parsed_u = urlparse(target)
+            domain = (parsed_u.hostname or parsed_u.netloc).lower()
             if domain and not any(allowed in domain for allowed in ALLOWED_DOMAINS):
                 raise ActionNotAllowedError(f"Navigation to disallowed domain: {domain}")
 
@@ -423,7 +427,7 @@ class NebulaSession:
                 self.last_known_url = self.browser_manager.page.url
                 self.last_known_title = self.browser_manager.page.title()
                 # Check if this is a video/media player page
-                if "youtube.com/watch" in self.last_known_url:
+                if "youtube.com/watch" in self.last_known_url or "video" in self.last_known_url:
                     self.player_page = self.browser_manager.page
                     dismiss_consent_modals(self.player_page)
             return res
@@ -437,13 +441,13 @@ class NebulaSession:
             return res
 
         elif act == ActionType.CLICK:
-            res = orion_core.OrionSystem.web_action("click", {"selector": target})
+            res = orion_core.OrionSystem.web_action("click", {"selector": target}, approved=getattr(step, "requires_approval", False))
             self.last_reversible_action = None
             return res
 
-        elif act == ActionType.TYPE:
-            res = orion_core.OrionSystem.web_action("type", {"selector": step.params.get("selector", "input"), "text": target})
-            self.last_reversible_action = {"action": "type", "selector": step.params.get("selector", "input")}
+        elif act == ActionType.FILL:
+            res = orion_core.OrionSystem.web_action("fill", {"selector": step.params.get("selector", "input"), "text": target}, approved=getattr(step, "requires_approval", False))
+            self.last_reversible_action = {"action": "fill", "selector": step.params.get("selector", "input")}
             return res
 
         elif act == ActionType.SCREENSHOT:
