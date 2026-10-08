@@ -256,3 +256,105 @@ class TestTelemetryAndHUD:
         hub = TelemetryHub()
         hud = DesktopHUD(hub)
         assert hud._is_running is False
+
+
+# =========================================================================
+# 7. Phase 3: FreezeDetector & CrashBannerDetector
+# =========================================================================
+
+class TestFreezeAndCrashDetectors:
+    def test_crash_banner_detection(self):
+        from verify.screen_watcher import CrashBannerDetector
+        crashed, pattern = CrashBannerDetector.check_crash("Google Chrome error: Aw, Snap! Something went wrong.")
+        assert crashed is True
+        assert "aw" in pattern
+
+        crashed, _ = CrashBannerDetector.check_crash("Welcome to Google Home")
+        assert crashed is False
+
+    @pytest.mark.asyncio
+    async def test_freeze_detector_on_static_surface(self):
+        from verify.screen_watcher import FreezeDetector
+        from PIL import Image
+        import io
+
+        img = Image.new("RGB", (60, 60), (100, 100, 100))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        frame_bytes = buf.getvalue()
+
+        detector = FreezeDetector(sample_interval_sec=0.01, freeze_threshold_pct=0.05)
+        report = await detector.check_surface_activity(lambda: frame_bytes, duration_sec=0.05)
+
+        assert report.is_frozen is True
+        assert report.max_delta_pct == 0.0
+
+
+# =========================================================================
+# 8. Phase 4: PIIRedactor in GeminiVision
+# =========================================================================
+
+class TestPIIRedaction:
+    def test_redact_sensitive_rectangles(self):
+        from verify.gemini_vision import PIIRedactor
+        from PIL import Image
+        import io
+
+        # 100x100 white image
+        img = Image.new("RGB", (100, 100), (255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        orig_bytes = buf.getvalue()
+
+        # Redact a 20x20 box at (10, 10)
+        rects = [{"x": 10, "y": 10, "width": 20, "height": 20}]
+        redacted_bytes = PIIRedactor.redact_boxes(orig_bytes, rects)
+        assert len(redacted_bytes) > 0
+
+        # Verify pixels in redacted area are black
+        out_img = Image.open(io.BytesIO(redacted_bytes))
+        pixel = out_img.getpixel((15, 15))
+        assert pixel == (0, 0, 0)  # Pure black fill
+
+
+# =========================================================================
+# 9. Phase 5: API Server Endpoints
+# =========================================================================
+
+class TestApiServer:
+    @pytest.mark.asyncio
+    async def test_health_and_telemetry_endpoints(self):
+        from fastapi.testclient import TestClient
+        import api_server
+        client = TestClient(api_server.app)
+
+        health_resp = client.get("/health")
+        assert health_resp.status_code == 200
+        assert health_resp.json()["status"] == "ok"
+
+        telemetry_resp = client.get("/telemetry")
+        assert telemetry_resp.status_code == 200
+        assert "status" in telemetry_resp.json()
+
+        kill_resp = client.post("/kill")
+        assert kill_resp.status_code == 200
+        assert kill_resp.json()["status"] == "stopped"
+
+
+# =========================================================================
+# 10. Phase 6: AutoGen Society 3D Blender Routing
+# =========================================================================
+
+class TestAutoGenSocietyRouter:
+    def test_routes_blender_3d_goal(self):
+        from orion_autogen import NebulaModel
+        model = NebulaModel(use_voice=False, minimal=True)
+
+        plan = model.decompose_goal("open blender and add cube and render")
+        agents = [s["agent"] for s in plan]
+        actions = [s["action"] for s in plan]
+
+        assert "Blender Executor" in agents
+        assert "launch" in actions
+        assert "hotkey" in actions
+        assert "render" in actions

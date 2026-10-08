@@ -45,6 +45,15 @@ except ImportError:
     except Exception:
         nebula_banner = None
 
+try:
+    from hud import TelemetryHub
+except ImportError:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from hud import TelemetryHub
+    except Exception:
+        TelemetryHub = None
+
 
 class StreamConsole:
     """Provides unbuffered, real-time line-by-line terminal stream with signature Nebula branding."""
@@ -189,6 +198,60 @@ class NebulaModel:
                     "action": "speak",
                     "target": f"Now playing {term} on YouTube, sir.",
                     "desc": "Announce playback via Microsoft George HD"
+                })
+            return steps
+
+        # -------------------------------------------------------------
+        # 1.5 Blender 3D Workflow Goals: e.g. "open blender and add cube", "render in blender"
+        # -------------------------------------------------------------
+        if re.search(r'\b(blender|3d\s+model|render\s+scene|add\s+cube|edit\s+mesh|3d\s+viewport)\b', raw, re.I):
+            steps.append({
+                "agent": "Blender Executor",
+                "action": "launch",
+                "target": "blender",
+                "desc": "Launch and attach to Blender 3D"
+            })
+            steps.append({
+                "agent": "Blender Executor",
+                "action": "focus",
+                "target": "blender",
+                "desc": "Bring Blender 3D viewport to foreground"
+            })
+            if re.search(r'\b(add|cube|mesh)\b', raw, re.I):
+                steps.append({
+                    "agent": "Blender Executor",
+                    "action": "hotkey",
+                    "keys": ["shift", "a"],
+                    "target": "shift+a",
+                    "desc": "Open 3D Add Menu (Shift+A)"
+                })
+            if re.search(r'\b(render)\b', raw, re.I):
+                steps.append({
+                    "agent": "Blender Executor",
+                    "action": "render",
+                    "target": "f12",
+                    "desc": "Trigger 3D Render Engine (F12)"
+                })
+            if re.search(r'\b(orbit|rotate)\b', raw, re.I):
+                steps.append({
+                    "agent": "Blender Executor",
+                    "action": "orbit",
+                    "dx": 120,
+                    "dy": -40,
+                    "desc": "Orbit 3D Viewport camera"
+                })
+            steps.append({
+                "agent": "Perception Inspector",
+                "action": "shot",
+                "target": None,
+                "desc": "Visually verify 3D Viewport rendered state"
+            })
+            if self.use_voice:
+                steps.append({
+                    "agent": "Studio Narrator",
+                    "action": "speak",
+                    "target": "Blender 3D operations executed and verified.",
+                    "desc": "Announce 3D milestone completion"
                 })
             return steps
 
@@ -649,6 +712,13 @@ class NebulaModel:
         time.sleep(0.04)
 
         plan = self.decompose_goal(goal)
+        if TelemetryHub:
+            TelemetryHub.get_instance().update(
+                agent_name="Commander Nebula",
+                status="RUNNING",
+                current_step=f"Formulated {len(plan)} milestones for goal: {goal[:40]}"
+            )
+
         if not self.minimal:
             self.stream.print_line("Commander Nebula", "🧠", f"Received Chrome goal: \"{goal}\"")
             self.stream.print_line("Commander Nebula", "📋", f"Formulated {len(plan)}-milestone collaborative execution plan:")
@@ -675,6 +745,13 @@ class NebulaModel:
                 act = step["action"]
                 target = step.get("target")
                 t_step_start = time.perf_counter()
+
+                if TelemetryHub:
+                    TelemetryHub.get_instance().update(
+                        agent_name=agent,
+                        status="RUNNING",
+                        current_step=f"[{idx}/{len(plan)}] {step.get('desc', act)}"
+                    )
 
                 # Pre-action modal error dialog scan (Watchdog)
                 modal_check = self.healer.scan_and_dismiss_modal_dialogs()
@@ -792,6 +869,57 @@ class NebulaModel:
                                 self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Chrome session closed.")
 
                         # ---------------------------------------------
+                        # BLENDER EXECUTOR (Orion Substrate 3D Worker)
+                        # ---------------------------------------------
+                        elif agent in ("Blender Executor", "Blender Model", "3D Executor"):
+                            self.stream.print_line("Blender Executor", "🎨", f"Milestone {idx}: {step['desc']}...")
+                            from orion_desktop import OrionSubstrate
+                            sub = OrionSubstrate()
+                            blender_adapter = sub.get_adapter("blender")
+
+                            if act == "launch":
+                                blender_adapter.launch()
+                            elif act == "focus":
+                                blender_adapter.focus()
+                            elif act == "hotkey":
+                                sub.hotkey(*(step.get("keys") or [target]))
+                            elif act == "orbit":
+                                blender_adapter.orbit(step.get("dx", 120), step.get("dy", -40))
+                            elif act == "render":
+                                blender_adapter.trigger_render()
+                            elif act == "type":
+                                sub.type_text(target)
+                            elif act == "press":
+                                sub.press(target)
+
+                            elapsed = (time.perf_counter() - t_step_start) * 1000
+                            self.stream.print_success(f"3D interaction executed: {step['desc']}", elapsed)
+                            self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: 3D command dispatched.")
+
+                        # ---------------------------------------------
+                        # DESKTOP EXECUTOR (Native Windows Worker)
+                        # ---------------------------------------------
+                        elif agent == "Desktop Executor":
+                            self.stream.print_line("Desktop Executor", "🖥️", f"Milestone {idx}: {step['desc']}...")
+                            from orion_desktop import OrionSubstrate
+                            sub = OrionSubstrate()
+
+                            if act == "launch":
+                                sub.launch_app(target)
+                            elif act == "focus":
+                                sub.focus_window(target)
+                            elif act == "hotkey":
+                                sub.hotkey(*(step.get("keys") or [target]))
+                            elif act == "type":
+                                sub.type_text(target)
+                            elif act == "press":
+                                sub.press(target)
+
+                            elapsed = (time.perf_counter() - t_step_start) * 1000
+                            self.stream.print_success(f"Desktop interaction executed: {step['desc']}", elapsed)
+                            self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Desktop action dispatched.")
+
+                        # ---------------------------------------------
                         # PERCEPTION INSPECTOR
                         # ---------------------------------------------
                         elif agent == "Perception Inspector":
@@ -859,6 +987,13 @@ class NebulaModel:
             self.perception.stop()
 
         total_elapsed = time.perf_counter() - t_workflow_start
+        if TelemetryHub:
+            TelemetryHub.get_instance().update(
+                agent_name="Commander Nebula",
+                status="SUCCESS",
+                current_step=f"Executed {len(plan)} milestones successfully in {total_elapsed:.2f}s"
+            )
+
         if self.minimal:
             self.stream.print_done(len(plan), total_elapsed)
         else:

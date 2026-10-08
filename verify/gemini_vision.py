@@ -1,15 +1,22 @@
 """
 Gemini Multimodal Vision Intelligence Client for Nebula Web Engine.
-Invoked ONLY when local heuristics are uncertain or an obstacle is detected.
-Enforces strict privacy boundaries (never sends sensitive auth/payment screens).
+Phase 4 Implementation:
+- Visual reasoning fallback with automated PII privacy redaction.
+- Zero-cost gating (invoked ONLY when local heuristics are uncertain or an obstacle is spotted).
+- Automated Pillow black-box redaction of sensitive form bounding boxes.
+- Strict refusal on banking / login surfaces.
+- Structured JSON remediation schema with click coordinates (x, y).
 """
 
 import base64
+import io
 import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from PIL import Image, ImageDraw
 
 logger = logging.getLogger("nebula.gemini_vision")
 
@@ -26,14 +33,56 @@ class VisionRemediation:
     raw_response: Optional[Dict[str, Any]] = None
 
 
+class PIIRedactor:
+    """
+    Automated client-side visual redaction for privacy defense.
+    Draws opaque black fill over sensitive UI rectangles prior to cloud transmission.
+    """
+
+    @classmethod
+    def redact_boxes(
+        cls,
+        image_bytes: bytes,
+        rects: List[Dict[str, int]],
+        fill_color: str = "#000000"
+    ) -> bytes:
+        """
+        Overlays solid black boxes over sensitive coordinate rectangles.
+        Each rect: {'x': int, 'y': int, 'width': int, 'height': int}.
+        """
+        if not rects:
+            return image_bytes
+
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            draw = ImageDraw.Draw(img)
+
+            for r in rects:
+                x0 = r.get("x", 0)
+                y0 = r.get("y", 0)
+                w = r.get("width", 0)
+                h = r.get("height", 0)
+                x1 = x0 + w
+                y1 = y0 + h
+                draw.rectangle([x0, y0, x1, y1], fill=fill_color)
+
+            out_buf = io.BytesIO()
+            img.save(out_buf, format="PNG")
+            return out_buf.getvalue()
+        except Exception as e:
+            logger.error("PII redaction failed: %s", e)
+            return image_bytes
+
+
 class GeminiVisionClient:
     """
     Multimodal visual reasoner that evaluates complex visual obstacles.
-    Includes zero-cost gating and client-side PII privacy filtering.
+    Includes zero-cost gating, automated PII masking, and client-side privacy filtering.
     """
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self.redactor = PIIRedactor()
 
     def is_available(self) -> bool:
         return bool(self.api_key.strip())
@@ -60,10 +109,11 @@ class GeminiVisionClient:
         image_bytes: bytes,
         page_url: str = "",
         page_title: str = "",
-        task_objective: str = ""
+        task_objective: str = "",
+        sensitive_rects: Optional[List[Dict[str, int]]] = None
     ) -> VisionRemediation:
         """
-        Sends masked screenshot to Gemini Vision for structured obstacle remediation.
+        Redacts PII and sends image to Gemini Vision for structured obstacle remediation.
         If privacy boundary is triggered, immediately aborts.
         """
         # Privacy Guard
@@ -76,6 +126,11 @@ class GeminiVisionClient:
                 explanation="Privacy boundary active: Screen contains credentials or payment fields."
             )
 
+        # Automated PII Redaction
+        redacted_bytes = image_bytes
+        if sensitive_rects:
+            redacted_bytes = self.redactor.redact_boxes(image_bytes, sensitive_rects)
+
         # Mock / Offline mode fallback if no API key is provided
         if not self.is_available():
             logger.info("Gemini Vision running in offline/deterministic heuristic mode.")
@@ -86,12 +141,11 @@ class GeminiVisionClient:
                 explanation="Offline mode: No Gemini API key provided. Relying on local heuristics."
             )
 
-        # In production with API key, calls Gemini 1.5/2.0 Flash Multimodal Vision
+        # Production query to Gemini API
         try:
-            # Prepare payload
-            b64_image = base64.b64encode(image_bytes).decode("utf-8")
+            b64_image = base64.b64encode(redacted_bytes).decode("utf-8")
             prompt = (
-                f"You are the visual supervisor for a browser automation agent.\n"
+                f"You are the visual supervisor for an automated browser agent.\n"
                 f"Current URL: {page_url}\n"
                 f"Task Objective: {task_objective}\n"
                 f"Identify any popup, modal, cookie banner, or blocking overlay on this screen.\n"
@@ -106,7 +160,6 @@ class GeminiVisionClient:
                 f"}}"
             )
 
-            # Lazy import or requests call
             import urllib.request
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
             payload = {
