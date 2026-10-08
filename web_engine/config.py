@@ -116,8 +116,8 @@ class BrowserConfig:
     headless: bool = field(
         default_factory=lambda: os.getenv("WEB_HEADLESS", "false").lower() in ("true", "1", "yes")
     )
-    browser_channel: str = field(
-        default_factory=lambda: os.getenv("WEB_BROWSER_CHANNEL", "chrome")
+    browser_channel: Optional[str] = field(
+        default_factory=lambda: os.getenv("WEB_BROWSER_CHANNEL", None)
     )
     viewport_width: int = int(os.getenv("WEB_VIEWPORT_WIDTH", "1920"))
     viewport_height: int = int(os.getenv("WEB_VIEWPORT_HEIGHT", "1080"))

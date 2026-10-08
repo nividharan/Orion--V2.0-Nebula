@@ -16,6 +16,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -137,6 +138,140 @@ def get_browser_executable(browser_preference: Optional[str] = None) -> str:
     return "chrome"
 
 
+def _try_click_loc(loc, strategy_name: str, target: str) -> Optional[Dict[str, Any]]:
+    try:
+        if loc.count() > 0 and loc.first.is_visible():
+            loc.first.scroll_into_view_if_needed(timeout=1000)
+            loc.first.click(timeout=2500)
+            return {"ok": True, "status": "success", "strategy": strategy_name, "target": target}
+    except Exception as e:
+        err_msg = str(e).lower()
+        if any(term in err_msg for term in ["navigation", "navigating", "context was destroyed", "frame was detached"]):
+            return {"ok": True, "status": "success", "strategy": f"{strategy_name}_navigated", "target": target}
+    return None
+
+
+def _smart_click(page, target: str) -> Dict[str, Any]:
+    if not target or not page:
+        return {"ok": False, "error": "missing_target"}
+    target = str(target).strip().strip("'\"")
+
+    # Strategy 0: Element index if target is integer or [N]
+    m_num = re.match(r'^\[?(\d+)\]?$', target)
+    if m_num:
+        idx = int(m_num.group(1)) - 1
+        interactives = page.locator("button:visible, a:visible, input[type='button']:visible, input[type='submit']:visible, [role='button']:visible, [role='link']:visible")
+        count = interactives.count()
+        if 0 <= idx < count:
+            res = _try_click_loc(interactives.nth(idx), "index", f"[{idx+1}]")
+            if res:
+                return res
+
+    # Strategy 1: CSS selector if contains selector syntax
+    if any(c in target for c in ('#', '.', '[', '>', ':', '//')) and ' ' not in target:
+        res = _try_click_loc(page.locator(target), "css", target)
+        if res:
+            return res
+
+    # Strategy 2: Playwright accessible roles (button, link, tab, menuitem)
+    for role in ("button", "link", "tab", "menuitem"):
+        res = _try_click_loc(page.get_by_role(role, name=target, exact=False), f"role_{role}", target)
+        if res:
+            return res
+
+    # Strategy 3: Text content match (get_by_text)
+    res = _try_click_loc(page.get_by_text(target, exact=False), "text", target)
+    if res:
+        return res
+
+    # Strategy 4: Common interactive tag text match
+    res = _try_click_loc(page.locator(f"button:has-text('{target}'), a:has-text('{target}'), [role='button']:has-text('{target}')"), "has_text", target)
+    if res:
+        return res
+
+    # Strategy 5: ARIA label, title, placeholder attribute
+    res = _try_click_loc(page.locator(f"[aria-label*='{target}' i], [title*='{target}' i], [placeholder*='{target}' i]"), "aria_attr", target)
+    if res:
+        return res
+
+    # Strategy 6: Standard click fallback
+    try:
+        page.click(target, timeout=1500)
+        return {"ok": True, "status": "success", "strategy": "fallback", "target": target}
+    except Exception as e:
+        err_msg = str(e).lower()
+        if any(term in err_msg for term in ["navigation", "navigating", "context was destroyed", "frame was detached"]):
+            return {"ok": True, "status": "success", "strategy": "fallback_navigated", "target": target}
+        return {"ok": False, "error": f"Element '{target}' could not be located on active page", "details": str(e)}
+
+
+def _smart_fill(page, target: str, text: str) -> Dict[str, Any]:
+    if not page:
+        return {"ok": False, "error": "no_page"}
+    target = str(target or "").strip().strip("'\"")
+
+    # If generic search/input or blank target
+    if not target or target.lower() in ("input", "search", "box", "search bar", "textbox", "field"):
+        for sel in (
+            "input[type='search']:visible",
+            "input[name*='search' i]:visible",
+            "input[placeholder*='search' i]:visible",
+            "input[type='text']:visible",
+            "textarea:visible",
+            "input:visible"
+        ):
+            try:
+                loc = page.locator(sel).first
+                if loc.is_visible():
+                    loc.fill(text, timeout=1500)
+                    return {"ok": True, "status": "success", "strategy": "generic_input", "selector": sel}
+            except Exception:
+                continue
+
+    # Strategy 1: Label
+    try:
+        loc = page.get_by_label(target, exact=False).first
+        if loc.is_visible():
+            loc.fill(text, timeout=1500)
+            return {"ok": True, "status": "success", "strategy": "label", "target": target}
+    except Exception:
+        pass
+
+    # Strategy 2: Placeholder
+    try:
+        loc = page.get_by_placeholder(target, exact=False).first
+        if loc.is_visible():
+            loc.fill(text, timeout=1500)
+            return {"ok": True, "status": "success", "strategy": "placeholder", "target": target}
+    except Exception:
+        pass
+
+    # Strategy 3: Role textbox
+    try:
+        loc = page.get_by_role("textbox", name=target, exact=False).first
+        if loc.is_visible():
+            loc.fill(text, timeout=1500)
+            return {"ok": True, "status": "success", "strategy": "role_textbox", "target": target}
+    except Exception:
+        pass
+
+    # Strategy 4: Attribute match
+    try:
+        loc = page.locator(f"input[name*='{target}' i], textarea[name*='{target}' i], [aria-label*='{target}' i]").first
+        if loc.is_visible():
+            loc.fill(text, timeout=1500)
+            return {"ok": True, "status": "success", "strategy": "attr", "target": target}
+    except Exception:
+        pass
+
+    # Strategy 5: CSS selector
+    try:
+        page.fill(target, text, timeout=1500)
+        return {"ok": True, "status": "success", "strategy": "css", "target": target}
+    except Exception as e:
+        return {"ok": False, "error": f"Input field '{target}' not found", "details": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Core Web Facade: OrionSystem
 # ---------------------------------------------------------------------------
@@ -214,25 +349,13 @@ class OrionSystem:
         elif act == "click":
             selector = p.get("selector") or p.get("ref")
             if selector and mgr.page:
-                try:
-                    mgr.page.click(selector, timeout=2000)
-                except Exception:
-                    try:
-                        mgr.page.locator(selector).first.click(timeout=1000)
-                    except Exception:
-                        pass
+                return _smart_click(mgr.page, selector)
             return {"ok": True, "status": "success", "action": act}
         elif act in ("type", "fill"):
             selector = p.get("selector") or "input"
             text = p.get("text", "")
-            if selector and mgr.page:
-                try:
-                    mgr.page.fill(selector, text, timeout=2000)
-                except Exception:
-                    try:
-                        mgr.page.locator(selector).first.fill(text, timeout=1000)
-                    except Exception:
-                        pass
+            if mgr.page:
+                return _smart_fill(mgr.page, selector, text)
             return {"ok": True, "status": "success", "action": act}
         elif act == "press":
             key = p.get("key", "Enter")

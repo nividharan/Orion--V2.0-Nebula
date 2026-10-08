@@ -112,7 +112,8 @@ def _normalize_tamil_query(s: str) -> str:
     """Translates colloquial Tamil browser/song commands into canonical English commands."""
     # Skip normalization if the text already starts with a clear English command verb.
     _english_verb_prefix = ("play ", "search ", "open ", "go to ", "navigate ", "browse ",
-                            "scroll ", "close ", "next ", "prev ", "reload ", "find ", "show ")
+                            "scroll ", "close ", "next ", "prev ", "reload ", "find ", "show ",
+                            "click ", "type ", "fill ", "press ", "tap ", "inspect ", "read ", "list ")
     if any(s.startswith(v) for v in _english_verb_prefix):
         return s
 
@@ -136,7 +137,7 @@ def clean_input(text: str) -> str:
     if not text:
         return ""
 
-    s = text.strip().lower()
+    s = text.strip().strip("'\"“”‘’`").strip().lower()
 
     # 1. Strip wake words
     for pat in WAKE_WORDS:

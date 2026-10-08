@@ -19,6 +19,7 @@ import json
 import uuid
 import logging
 import threading
+import concurrent.futures
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -152,8 +153,6 @@ class NebulaSession:
             try:
                 if self.browser_manager.is_running and self.browser_manager.page:
                     if not self.browser_manager.page.is_closed():
-                        # Quick responsiveness probe
-                        self.browser_manager.page.evaluate("() => document.readyState")
                         is_healthy = True
             except Exception as e:
                 logger.warning(f"Browser health probe failed: {e}")
@@ -442,6 +441,16 @@ class NebulaSession:
 
         elif act == ActionType.CLICK:
             res = orion_core.OrionSystem.web_action("click", {"selector": target}, approved=getattr(step, "requires_approval", False))
+            if self.browser_manager.page and not self.browser_manager.page.is_closed():
+                try:
+                    self.browser_manager.page.wait_for_load_state("domcontentloaded", timeout=2500)
+                except Exception:
+                    pass
+                try:
+                    self.last_known_url = self.browser_manager.page.url
+                    self.last_known_title = self.browser_manager.page.title()
+                except Exception:
+                    pass
             self.last_reversible_action = None
             return res
 
@@ -468,6 +477,8 @@ class NebulaSession:
                 verdict = watcher.verify_page_health()
                 return {"verdict": verdict.verdict.value, "signals": verdict.signals}
             return {"verdict": "OK"}
+        elif act == ActionType.ARIA_SNAPSHOT:
+            return orion_core.OrionSystem.web_action("aria_snapshot")
 
         return {"status": "unsupported", "action": act.value}
 

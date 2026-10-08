@@ -41,6 +41,7 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset({
     'x.com', 'twitter.com',
     'udemy.com', 'www.udemy.com',
     'linkedin.com', 'www.linkedin.com',
+    'example.com', 'www.example.com',
     '127.0.0.1', 'localhost',
     'notepad',   # desktop target, not a URL
     'chrome',
@@ -421,6 +422,33 @@ def _r_open_search(m: re.Match) -> dict:
     }
 
 
+# Rule 2b: open <portal> <query> / search <portal> <query>
+@_rule(
+    r'^(?:open|launch|go to|search)\s+'
+    r'(google play|play store|youtube|github|amazon|wikipedia|reddit|google)\s+'
+    r'(?:for\s+)?([a-zA-Z0-9_\-\.\s]+)$'
+)
+def _r_direct_portal_query(m: re.Match) -> dict:
+    portal = m.group(1).strip().lower()
+    query  = m.group(2).strip()
+    url = _portal_url(portal, query)
+    return {
+        'intent': IntentType.WEB_SEARCH,
+        'confidence': 0.95,
+        'steps': [
+            {'action': ActionType.BROWSE,
+             'agent': 'Chrome Executor',
+             'target': url, 'portal': portal, 'query': query,
+             'desc': f"Search '{query}' on {portal.title()}"},
+            {'action': ActionType.SCREENSHOT, 'agent': 'Perception Inspector',
+             'desc': 'Verify result'},
+            {'action': ActionType.SPEAK, 'agent': 'Studio Narrator',
+             'target': f"Searching {portal.title()} for {query}.",
+             'desc': 'Announce action'},
+        ]
+    }
+
+
 # Rule 3: open new tab [and go to <dest>]
 @_rule(r'^(?:open|create)?\s*(?:a\s+)?new\s+tab(?:\s+(?:and\s+)?(?:go to|navigate to|open)\s+(.+))?$')
 def _r_new_tab(m: re.Match) -> dict:
@@ -555,6 +583,53 @@ def _r_goto(m: re.Match) -> dict:
              'target': dest, 'desc': f'Navigate to {dest}'},
             {'action': ActionType.SCREENSHOT, 'agent': 'Perception Inspector',
              'desc': 'Verify page loaded'},
+        ]
+    }
+
+
+# Rule 12: click <target> (e.g. click "Talk", click "Learn more", click [1], click button 1)
+@_rule(r'^(?:click|press|tap)\s+(?:on\s+)?(?:the\s+)?(?:"([^"]+)"|\'([^\']+)\'|(.+))$')
+def _r_click(m: re.Match) -> dict:
+    target = (m.group(1) or m.group(2) or m.group(3) or '').strip()
+    return {
+        'intent': IntentType.WEB_TASK,
+        'confidence': 0.95,
+        'steps': [
+            {'action': ActionType.CLICK, 'agent': 'Chrome Executor',
+             'target': target, 'desc': f"Click '{target}'"},
+            {'action': ActionType.SCREENSHOT, 'agent': 'Perception Inspector',
+             'desc': 'Verify click'},
+        ]
+    }
+
+
+# Rule 13: type / fill <text> [in/into <target>]
+@_rule(r'^(?:type|fill|enter|input)\s+(?:"([^"]+)"|\'([^\']+)\'|(.+?))(?:\s+(?:in|into|on)\s+(?:the\s+)?(?:"([^"]+)"|\'([^\']+)\'|(.+)))?$')
+def _r_fill(m: re.Match) -> dict:
+    text = (m.group(1) or m.group(2) or m.group(3) or '').strip()
+    target = (m.group(4) or m.group(5) or m.group(6) or 'input').strip()
+    return {
+        'intent': IntentType.WEB_TASK,
+        'confidence': 0.95,
+        'steps': [
+            {'action': ActionType.FILL, 'agent': 'Chrome Executor',
+             'target': text, 'params': {'selector': target},
+             'desc': f"Type '{text}' into {target}"},
+            {'action': ActionType.SCREENSHOT, 'agent': 'Perception Inspector',
+             'desc': 'Verify input'},
+        ]
+    }
+
+
+# Rule 14: inspect / read elements / aria snapshot
+@_rule(r'^(?:read\s+page|list\s+elements|show\s+elements|aria\s+snapshot|inspect\s+page)$')
+def _r_aria_snapshot(_m: re.Match) -> dict:
+    return {
+        'intent': IntentType.WEB_TASK,
+        'confidence': 0.99,
+        'steps': [
+            {'action': ActionType.ARIA_SNAPSHOT, 'agent': 'Chrome Executor',
+             'desc': 'Inspect active page interactive elements'},
         ]
     }
 

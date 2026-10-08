@@ -223,18 +223,19 @@ class BrowserManager:
         }
 
         # 1. Persistent Context Profile vs Standard Context
+        channel_kwargs = {"channel": self.config.browser_channel} if self.config.browser_channel else {}
         if self.config.use_persistent_profile:
             logger.info(f"Using persistent automation profile at '{self.config.profile_dir}'...")
             try:
                 self._context = self._playwright.chromium.launch_persistent_context(
                     str(self.config.profile_dir),
-                    channel=self.config.browser_channel,
                     headless=self.config.headless,
                     args=args,
+                    **channel_kwargs,
                     **context_options
                 )
             except Exception as e:
-                logger.warning(f"Persistent context launch with channel failed ({e}). Retrying with bundled Chromium...")
+                logger.warning(f"Persistent context launch failed ({e}). Retrying with bundled Chromium...")
                 self._context = self._playwright.chromium.launch_persistent_context(
                     str(self.config.profile_dir),
                     headless=self.config.headless,
@@ -246,11 +247,11 @@ class BrowserManager:
             launch_kwargs = {"headless": self.config.headless, "args": args}
             try:
                 self._browser = self._playwright.chromium.launch(
-                    channel=self.config.browser_channel,
+                    **channel_kwargs,
                     **launch_kwargs
                 )
             except Exception as e:
-                logger.warning(f"Chrome launch with channel failed ({e}). Retrying with bundled Chromium...")
+                logger.warning(f"Browser launch failed ({e}). Retrying with bundled Chromium...")
                 self._browser = self._playwright.chromium.launch(**launch_kwargs)
 
             # Check if saved storage state exists

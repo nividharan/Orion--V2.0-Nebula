@@ -20,6 +20,13 @@ import signal
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from session import NebulaSession, SessionConfig
 import media_control
 

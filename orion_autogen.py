@@ -607,13 +607,21 @@ class NebulaModel:
                 })
 
             # Type text into Chrome
-            elif any(k in cl for k in ["type", "write", "input"]):
-                text_target = re.sub(r'^(?:please\s+)?(?:type|write|input)\s+', '', clause, flags=re.I).strip().strip('\'"')
+            # Type text into Chrome
+            elif any(k in cl for k in ["type", "write", "input", "fill"]):
+                fill_match = re.match(r'^(?:please\s+)?(?:type|write|input|fill)\s+(?:"([^"]+)"|\'([^\']+)\'|(.+?))(?:\s+(?:in|into|on)\s+(?:the\s+)?(?:"([^"]+)"|\'([^\']+)\'|(.+)))?$', clause, re.I)
+                if fill_match:
+                    text_target = (fill_match.group(1) or fill_match.group(2) or fill_match.group(3) or '').strip()
+                    selector_target = (fill_match.group(4) or fill_match.group(5) or fill_match.group(6) or 'input').strip()
+                else:
+                    text_target = re.sub(r'^(?:please\s+)?(?:type|write|input|fill)\s+', '', clause, flags=re.I).strip().strip('\'"')
+                    selector_target = 'input'
                 steps.append({
                     "agent": "Chrome Executor",
                     "action": "type",
                     "target": text_target,
-                    "desc": f"Type text into active Chrome page: \"{text_target}\""
+                    "selector": selector_target,
+                    "desc": f"Type text \"{text_target}\" into {selector_target}"
                 })
 
             # Keystroke / Hotkey
@@ -634,12 +642,22 @@ class NebulaModel:
                 })
 
             # Mouse Click
-            elif any(k in cl for k in ["click", "double click"]):
+            elif any(k in cl for k in ["click", "double click", "tap"]):
+                click_target = re.sub(r'^(?:please\s+)?(?:click|double click|tap)\s+(?:on\s+)?(?:the\s+)?', '', clause, flags=re.I).strip().strip('\'"')
                 steps.append({
                     "agent": "Chrome Executor",
                     "action": "click",
-                    "target": clause,
-                    "desc": "Inject mouse click on active Chrome page"
+                    "target": click_target,
+                    "desc": f"Click '{click_target}' on active Chrome page"
+                })
+
+            # Inspect elements
+            elif any(k in cl for k in ["inspect page", "read page", "list elements", "show elements", "aria snapshot"]):
+                steps.append({
+                    "agent": "Perception Inspector",
+                    "action": "aria_snapshot",
+                    "target": None,
+                    "desc": "Inspect interactive elements on active page"
                 })
 
             # Visual Screenshot / Verification
@@ -840,7 +858,7 @@ class NebulaModel:
                                 self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Chrome native action dispatched.")
 
                             elif act == "type":
-                                res = orion_core.OrionSystem.web_action("type", {"text": target})
+                                res = orion_core.OrionSystem.web_action("type", {"text": target, "selector": step.get("selector", "input")})
                                 elapsed = (time.perf_counter() - t_step_start) * 1000
                                 self.stream.print_success(f"Typed {len(target)} characters into Chrome", elapsed)
                                 self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Keystrokes injected into web page.")
@@ -937,7 +955,15 @@ class NebulaModel:
                                     first_line = aria_desc.splitlines()[0] if aria_desc.splitlines() else "DOM tree active"
                                     self.stream.print_line("Perception Inspector", "🌲", f"Semantic Tree: {first_line} (+{len(aria_desc.splitlines())} nodes)")
 
-                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Frame buffer ({size_info}) confirmed.")
+                            elif act == "aria_snapshot":
+                                aria_desc = orion_core.OrionSystem.web_aria_snapshot()
+                                elapsed = (time.perf_counter() - t_step_start) * 1000
+                                count = len(aria_desc.splitlines()) if aria_desc else 0
+                                self.stream.print_success(f"Captured Semantic Tree ({count} elements)", elapsed)
+                                if aria_desc:
+                                    for line in aria_desc.splitlines()[:10]:
+                                        self.stream.print_line("Perception Inspector", "🌲", f"  {line}")
+                                self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Semantic elements listed.")
 
                             elif act == "listen":
                                 self.stream.print_line("Perception Inspector", "🎙️", "Listening to microphone for 4 seconds...")
