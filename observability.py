@@ -201,13 +201,29 @@ def run_regression_suite(verbose: bool = False) -> Dict[str, Any]:
     Exit criteria: 0 critical errors across the full project.
     """
     modules = [
+        # Phase 0 — safety & cleanup
+        "tests.test_phase0_safety",
+        # Phase 1 — web engine smoke
         "web_engine.tests.test_smoke_engine",
+        # Phase 1b — facade characterization
+        "tests.test_facade_characterization",
+        # Phase 2 — resolvers
         "tests.test_resolvers",
+        # Phase 3 — schemas
         "tests.test_schemas",
+        # Phase 4 — brain / AI planning
         "tests.test_brain",
+        # Phase 5 — input pipeline
+        "tests.test_input_pipeline",
+        # Phase 5b — desktop playback
         "tests.test_playback",
+        # Phase 6 — page watcher
+        "tests.test_page_watcher",
+        # Phase 6b — API client
         "tests.test_api_client",
+        # Phase 7 — agent society
         "tests.test_society",
+        # Utilities
         "tests.test_banner",
     ]
 

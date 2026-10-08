@@ -54,6 +54,23 @@ Orion v2.0 establishes a clean separation between the **OS System Layer** and th
 
 ---
 
+## 🗺️ Phase Roadmap
+
+| Phase | Title | Status | Tests |
+|-------|-------|--------|-------|
+| 0 | Safety, cleanup, atomic writes, cache tracking | ✅ Complete | 8 |
+| 1 | Web-only Playwright facade, stealth, consent, guardrails | ✅ Complete | 27 |
+| 2 | Media resolver — ad filtering, scoring, TTL, API fallback | ✅ Complete | 18 |
+| 3–4 | Intent alias normalization, AI planning, retry/fallback | ✅ Complete | 38 |
+| 5 | Input pipeline — bilingual cleaning, reference resolution | ✅ Complete | 100 |
+| 6 | Page watcher — DOM error/modal/login detection, visual diff, 24h retention | ✅ Complete | 22 |
+| 7 | Agent society — `web_verify_page` wired into `SocietyCoordinator` | ✅ Complete | 17 |
+| 8 | Observability — structured JSON logging, secret redaction, regression audit | ✅ Complete | 4 + 293 |
+
+> **Phase 8 exit criteria**: `run_regression_suite()` reports **0 critical errors** across all 293 tests spanning every phase.
+
+---
+
 ## 🚀 Quick Start
 
 ### 1. Run the Nebula Cognitive Model (Natural Language Chrome Goals)
