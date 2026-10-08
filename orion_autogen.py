@@ -979,16 +979,43 @@ def run_nebula_cli():
         return
 
     verbose = False
+    detach = False
     args = []
     for a in raw_args:
         if a in ("--verbose", "-v"):
             verbose = True
+        elif a in ("--detach", "-d"):
+            detach = True
         else:
             args.append(a)
 
     goal = " ".join(args).strip('\'"')
     model = NebulaModel(use_voice=True, minimal=(not verbose))
-    model.run_collaborative_workflow(goal)
+    result = model.run_collaborative_workflow(goal)
+
+    # -------------------------------------------------------------
+    # Chrome Persistence / Detached Hand-off
+    # -------------------------------------------------------------
+    from web_engine.browser_manager import BrowserManager
+    active_mgr = BrowserManager.get_active()
+    if active_mgr and active_mgr.is_running:
+        page_url = active_mgr.page.url if active_mgr.page else None
+        if not detach and sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+            try:
+                sys.stdout.write("\n🎶 Chrome is active and playing. Press Enter to keep Chrome open on desktop (or Ctrl+C to stop)...\n")
+                sys.stdout.flush()
+                input()
+                # Hand off to native detached browser so it persists indefinitely
+                if page_url and page_url != "about:blank":
+                    orion_core.launch_detached_browser(page_url)
+                    time.sleep(0.3)
+                    active_mgr.close()
+            except (KeyboardInterrupt, EOFError):
+                active_mgr.close()
+        elif detach and page_url and page_url != "about:blank":
+            orion_core.launch_detached_browser(page_url)
+            time.sleep(0.3)
+            active_mgr.close()
 
 
 if __name__ == "__main__":

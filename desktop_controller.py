@@ -93,6 +93,42 @@ def resolve_web_target(query_or_url: str) -> str:
     return f"https://www.google.com/search?q={urllib.parse.quote_plus(s)}"
 
 
+def find_chrome_executable() -> Optional[str]:
+    """Finds installed Google Chrome binary on Windows."""
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def launch_detached_browser(url: str) -> bool:
+    """Launches Chrome or system browser detached so it persists after script exits."""
+    chrome_exe = find_chrome_executable()
+    target_url = resolve_web_target(url)
+    if chrome_exe and os.path.exists(chrome_exe):
+        try:
+            import subprocess
+            cmd = [chrome_exe, "--new-window", target_url]
+            # DETACHED_PROCESS (0x8) | CREATE_NEW_PROCESS_GROUP (0x200)
+            subprocess.Popen(cmd, creationflags=0x00000008 | 0x00000200, close_fds=True)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to launch detached Chrome ({e}); falling back to default browser")
+    try:
+        import webbrowser
+        webbrowser.open(target_url)
+        return True
+    except Exception:
+        return False
+
+
 def get_browser_executable(browser_preference: Optional[str] = None) -> str:
     """Returns preferred browser channel or executable name for Playwright."""
     pref = (browser_preference or "chrome").lower()
@@ -236,9 +272,12 @@ def take_screenshot(save_path: Optional[str] = None, bbox: Optional[tuple] = Non
     }
 
 
-def browse_web(query_or_url: str, browser: Optional[str] = None) -> Dict[str, Any]:
-    """Launches Playwright and navigates to target URL."""
+def browse_web(query_or_url: str, browser: Optional[str] = None, detach: bool = False) -> Dict[str, Any]:
+    """Launches browser and navigates to target URL (detachable for persistence)."""
     target_url = resolve_web_target(query_or_url)
+    if detach:
+        ok = launch_detached_browser(target_url)
+        return {"ok": ok, "status": "success", "url": target_url, "mode": "detached"}
     return OrionSystem.web_browse(target_url)
 
 
@@ -488,7 +527,7 @@ def main() -> None:
         result = preflight_check()
     elif args.command in ("browse", "search", "web"):
         query_str = " ".join(args.query).strip()
-        result = browse_web(query_str, browser=args.browser)
+        result = browse_web(query_str, browser=args.browser, detach=True)
     elif args.command == "chrome":
         result = chrome_action(args.action, args.param)
     elif args.command in ("screenshot", "shot"):
