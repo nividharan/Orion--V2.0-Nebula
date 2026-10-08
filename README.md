@@ -56,20 +56,48 @@ Orion v2.0 establishes a clean separation between the **OS System Layer** and th
 
 ---
 
-## 🗺️ Phase Roadmap
+## 🔄 How It Works
 
-| Phase | Title | Status | Tests |
-|-------|-------|--------|-------|
-| 0 | Safety, cleanup, atomic writes, cache tracking | ✅ Complete | 8 |
-| 1 | Web-only Playwright facade, stealth, consent, guardrails | ✅ Complete | 27 |
-| 2 | Media resolver — ad filtering, scoring, TTL, API fallback | ✅ Complete | 18 |
-| 3–4 | Intent alias normalization, AI planning, retry/fallback | ✅ Complete | 38 |
-| 5 | Input pipeline — bilingual cleaning, reference resolution | ✅ Complete | 100 |
-| 6 | Page watcher — DOM error/modal/login detection, visual diff, 24h retention | ✅ Complete | 22 |
-| 7 | Agent society — `web_verify_page` wired into `SocietyCoordinator` | ✅ Complete | 17 |
-| 8 | Observability — structured JSON logging, secret redaction, regression audit | ✅ Complete | 4 + 293 |
+Every command runs through a closed-loop 5-stage execution pipeline:
 
-> **Phase 8 exit criteria**: `run_regression_suite()` reports **0 critical errors** across all 293 tests spanning every phase.
+```
+User Command (text / voice)
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  1. INPUT UNDERSTANDING                     │
+│  Clean → Typo-correct → Resolve context     │
+│  → Parse intent → Confidence gate           │
+└────────────────────────┬────────────────────┘
+                         │ Typed Plan (Intent + Steps)
+                         ▼
+┌─────────────────────────────────────────────┐
+│  2. AI PLANNING  (Commander Nebula)         │
+│  Gemini AI decomposition → validated Plan   │
+│  Falls back to local parser if AI fails     │
+└────────────────────────┬────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────┐
+│  3. EXECUTION  (Chrome Executor)            │
+│  Playwright browser actions, media resolve  │
+│  Domain allow-list + action guard enforced  │
+└────────────────────────┬────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────┐
+│  4. VERIFICATION  (Perception Inspector)    │
+│  DOM health check + perceptual visual diff  │
+│  Error pages, modals, login walls detected  │
+│  Self-heals on FAIL / UNCERTAIN verdict     │
+└────────────────────────┬────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────┐
+│  5. ANNOUNCE + LOG  (Studio Narrator)       │
+│  TTS outcome announcement + JSON audit log  │
+└─────────────────────────────────────────────┘
+```
 
 ---
 
@@ -252,40 +280,17 @@ python -m playwright install chromium
 
 ---
 
-## 📋 Changelog
+## 📋 What's New in v2.0
 
-### v2.0 — Full Phase 0–8 Refactor (October 2026)
+- 5-agent collaborative society with self-healing verification loop
+- Natural language input pipeline with bilingual Tamil/English support and confidence gating
+- DOM + visual page health verification after every action
+- AI-powered intent planning with automatic local fallback — no key required
+- Intelligent YouTube media resolver with relevance scoring and TTL caching
+- Structured per-step audit logging with automatic secret redaction
+- 293 tests across 12 modules — full regression runner in a single call
 
-**Phase 8 — Observability & Hardening**
-- `observability.py`: `StructuredLogger` (JSON-lines per step), `TaskAuditReporter` (success rate, latency, token spend, healed steps), automatic secret/key/token redaction
-- `run_regression_suite()`: single-call runner across all 12 test modules — 293 tests, 0 critical errors
-- **Bug fix**: `_normalize_tamil_query` guarded against English-prefixed commands to eliminate `"play play X"` double-word artefact
-
-**Phase 7 — Agent Society Integration**
-- `tools/typed_tools.py`: `web_verify_page()` tool wrapping `PageWatcher.verify_action_result()`
-- `tools/agent_society.py`: `SocietyCoordinator` verifier now branches on intent — media → `media_verify_playback` + heal loop; all others → `web_verify_page`
-- `tools/__init__.py`: `web_verify_page` exported to public surface
-
-**Phase 6 — Page Watcher**
-- `verify/page_watcher.py`: DOM-based error page detection, blocking modal/dialog detection, login-wall detection, perceptual visual diff (imagehash phash), frozen-frame detection, 24h log retention
-
-**Phase 5 — Input Pipeline**
-- `input_pipeline.py`: 8-stage pipeline (capture → clean → cancel → split → resolve → understand → validate → confidence gate)
-- Bilingual Tamil/English normalization, phonetic typo correction (`tamol→tamil`), conversational reference resolution, 100-command eval suite
-
-**Phase 3–4 — Intent Normalization & AI Brain**
-- `nebula_brain.py`: AI planning with retry, local fallback parser, `pick_candidate` deterministic scoring
-- Intent alias normalization: `media_play→media_playback`, `tab_operation→tab_management`
-
-**Phase 2 — Media Resolver**
-- `resolvers/youtube.py`: YouTube search with ad filtering, relevance scoring, TTL caching, API + scraper fallback
-
-**Phase 1 — Web Engine Refactor**
-- Scoped to web-only Playwright facade; removed desktop executor from hot path
-- Anti-bot stealth, CMP consent handlers, atomic state persistence, Git exposure guards
-
-**Phase 0 — Safety & Cleanup**
-- Atomic writes, owner-only file permissions, cache tracking, `.gitignore` hardening
+See [CHANGELOG.md](CHANGELOG.md) for the complete list of changes, fixes, and breaking changes.
 
 ---
 
