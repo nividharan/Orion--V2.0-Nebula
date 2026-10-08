@@ -41,7 +41,7 @@
         </div>
     </div>
 
-    <div id="sensitive-section">
+    <div id="sensitive-section" class="hidden">
         <label>Password: <input type="password" id="secret-pass" value="super_secret_123" /></label>
         <label>Credit Card: <input autocomplete="cc-number" id="secret-card" value="4111222233334444" /></label>
     </div>
@@ -97,6 +97,8 @@
                 adContainer.classList.add('hidden');
                 document.getElementById('player-container').classList.remove('ad-showing');
                 video.pause();
+            } else if (stateName === 'sensitive') {
+                document.getElementById('sensitive-section').classList.remove('hidden');
             }
         };
 

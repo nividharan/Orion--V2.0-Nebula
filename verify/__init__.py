@@ -11,6 +11,12 @@ from .playback import (
     skip_ad_if_available,
     ensure_video_playing,
 )
+from .page_watcher import (
+    PageWatcher,
+    WatchResult,
+    Verdict,
+    calculate_visual_diff_pct,
+)
 
 __all__ = [
     "PlaybackState",
@@ -20,4 +26,8 @@ __all__ = [
     "dismiss_consent_modals",
     "skip_ad_if_available",
     "ensure_video_playing",
+    "PageWatcher",
+    "WatchResult",
+    "Verdict",
+    "calculate_visual_diff_pct",
 ]
