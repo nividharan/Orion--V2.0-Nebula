@@ -26,3 +26,8 @@ scratch/
 !assets/*
 *.jpg
 !assets/*
+
+# Plans and design documents (kept in agent brain artifacts, not repo)
+*_PLAN.md
+*_plan.md
+*PLAN*.md
