@@ -522,6 +522,28 @@ def main() -> None:
 
     subparsers.add_parser("screenshot", aliases=["shot"])
 
+    # Orion Native Desktop Substrate Commands
+    p_type = subparsers.add_parser("type")
+    p_type.add_argument("text", nargs="+", help="Text to type via hardware SendInput")
+
+    p_press = subparsers.add_parser("press")
+    p_press.add_argument("key", help="Key to press (e.g. enter, tab, esc)")
+
+    p_hotkey = subparsers.add_parser("hotkey")
+    p_hotkey.add_argument("keys", nargs="+", help="Key chord (e.g. shift a or ctrl c)")
+
+    p_click = subparsers.add_parser("click")
+    p_click.add_argument("coords", nargs="*", type=int, help="Optional x y coordinates")
+
+    p_launch = subparsers.add_parser("launch")
+    p_launch.add_argument("app", help="Application to launch (e.g. notepad, blender, chrome)")
+
+    p_focus = subparsers.add_parser("focus")
+    p_focus.add_argument("window", help="Window title or class name to focus")
+
+    subparsers.add_parser("dialogs", help="Check for active system error dialogs (#32770)")
+    subparsers.add_parser("adapters", help="List registered application adapters")
+
     args, unknown = parser.parse_known_args()
 
     if not args.command:
@@ -534,7 +556,7 @@ def main() -> None:
             "project": PROJECT_NAME,
             "version": VERSION,
             "codename": CODENAME,
-            "engine": "Playwright Web Engine"
+            "engine": "Playwright Web Engine & Orion Substrate"
         }
     elif args.command == "preflight":
         result = preflight_check()
@@ -545,6 +567,47 @@ def main() -> None:
         result = chrome_action(args.action, args.param)
     elif args.command in ("screenshot", "shot"):
         result = take_screenshot()
+    elif args.command == "type":
+        from orion_desktop import OrionSubstrate
+        sub = OrionSubstrate()
+        text_str = " ".join(args.text)
+        ok = sub.type_text(text_str)
+        result = {"ok": ok, "action": "type", "text": text_str}
+    elif args.command == "press":
+        from orion_desktop import OrionSubstrate
+        sub = OrionSubstrate()
+        ok = sub.press(args.key)
+        result = {"ok": ok, "action": "press", "key": args.key}
+    elif args.command == "hotkey":
+        from orion_desktop import OrionSubstrate
+        sub = OrionSubstrate()
+        ok = sub.hotkey(*args.keys)
+        result = {"ok": ok, "action": "hotkey", "keys": args.keys}
+    elif args.command == "click":
+        from orion_desktop import OrionSubstrate
+        sub = OrionSubstrate()
+        x = args.coords[0] if len(args.coords) > 0 else None
+        y = args.coords[1] if len(args.coords) > 1 else None
+        ok = sub.click(x, y)
+        result = {"ok": ok, "action": "click", "x": x, "y": y}
+    elif args.command == "launch":
+        from orion_desktop import OrionSubstrate
+        sub = OrionSubstrate()
+        pid = sub.launch_app(args.app)
+        result = {"ok": bool(pid), "action": "launch", "app": args.app, "pid": pid}
+    elif args.command == "focus":
+        from orion_desktop import OrionSubstrate
+        sub = OrionSubstrate()
+        ok = sub.focus_window(args.window)
+        result = {"ok": ok, "action": "focus", "target": args.window}
+    elif args.command == "dialogs":
+        from orion_desktop import OrionSubstrate
+        sub = OrionSubstrate()
+        result = sub.check_dialogs()
+    elif args.command == "adapters":
+        from orion_desktop import OrionSubstrate
+        sub = OrionSubstrate()
+        result = {"ok": True, "adapters": sub.list_adapters()}
     else:
         result = _removed_web_only(command=args.command)
 
