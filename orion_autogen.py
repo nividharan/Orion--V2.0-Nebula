@@ -980,6 +980,13 @@ def run_nebula_cli():
             print("  --detach, -d               [Deprecated] Interactive mode keeps browser open by default\n")
         return
 
+    if raw_args and raw_args[0] == "--send" and len(raw_args) > 1:
+        from control_channel import send_command_to_running_session
+        cmd_to_send = " ".join(raw_args[1:]).strip('\'"')
+        res = send_command_to_running_session(cmd_to_send)
+        print(json.dumps(res, indent=2))
+        return
+
     # No args -> Enter interactive session mode
     from repl import start_interactive_repl
     if not raw_args:

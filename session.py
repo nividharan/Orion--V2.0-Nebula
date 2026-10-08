@@ -123,6 +123,16 @@ class NebulaSession:
         if self.config.media_watcher_enabled:
             self.start_media_watcher()
 
+        # Optional local control channel server (127.0.0.1)
+        self._control_server = None
+        if self.config.control_channel_enabled:
+            try:
+                from control_channel import LocalControlServer
+                self._control_server = LocalControlServer(self)
+                self._control_server.start()
+            except Exception as e:
+                logger.warning(f"Failed to start local control server: {e}")
+
     # -----------------------------------------------------------------------
     # Browser Lifecycle & Health Checking
     # -----------------------------------------------------------------------
@@ -533,6 +543,12 @@ class NebulaSession:
                 return
             self.closed = True
             self.stop_media_watcher()
+            if getattr(self, "_control_server", None):
+                try:
+                    self._control_server.stop()
+                    self._control_server = None
+                except Exception:
+                    pass
             try:
                 self.save_session_checkpoint()
             except Exception:
