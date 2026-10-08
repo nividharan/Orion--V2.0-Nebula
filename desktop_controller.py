@@ -412,16 +412,25 @@ class ContinuousPerceptionEngine:
         pass
     def stop(self) -> None:
         pass
+    def wait_for_settled(self, timeout: float = 1.0) -> bool:
+        return True
     def get_state(self) -> Dict[str, Any]:
-        return {"active": False, "mode": "web_only"}
+        return {
+            "active": False,
+            "mode": "web_only",
+            "visual_delta_pct": 0.0,
+            "is_settled": True,
+            "effective_fps": 6.0,
+            "active_window": {"process": "Chrome"},
+        }
 
 
 class SelfHealingResolver:
     """Retired desktop healer — replaced by verify/playback."""
     def __init__(self) -> None:
         pass
-    def scan_and_dismiss_modal_dialogs(self) -> List[Any]:
-        return []
+    def scan_and_dismiss_modal_dialogs(self) -> Dict[str, Any]:
+        return {"has_error_modal": False, "dismissed_dialogs": []}
 
 
 class LiveScreenMonitor:

@@ -678,10 +678,15 @@ class NebulaModel:
 
                 # Pre-action modal error dialog scan (Watchdog)
                 modal_check = self.healer.scan_and_dismiss_modal_dialogs()
-                if modal_check.get("has_error_modal"):
+                if isinstance(modal_check, dict) and modal_check.get("has_error_modal"):
                     for d in modal_check.get("dismissed_dialogs", []):
-                        self.stream.print_warning(f"Self-Healing: Dismissed blocking modal '{d['title']}': {d['message']}")
+                        self.stream.print_warning(f"Self-Healing: Dismissed blocking modal '{d.get('title', '')}': {d.get('message', '')}")
                         healed_events.append(d)
+                elif isinstance(modal_check, list) and modal_check:
+                    for d in modal_check:
+                        if isinstance(d, dict):
+                            self.stream.print_warning(f"Self-Healing: Dismissed blocking modal '{d.get('title', '')}': {d.get('message', '')}")
+                            healed_events.append(d)
 
                 step_succeeded = False
                 for attempt in range(1, 4):
