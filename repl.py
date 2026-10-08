@@ -219,6 +219,46 @@ def _execute_line(session: NebulaSession, cmd_line: str) -> None:
         sys.stdout.flush()
         return
 
+    elif first_word == "next":
+        page = session.player_page or session.browser_manager.page
+        if page:
+            res = media_control.next_video(page)
+            sys.stdout.write(f"  {res.get('message', 'Next video complete.')}\n")
+        else:
+            sys.stdout.write("  No active page or player.\n")
+        sys.stdout.flush()
+        return
+
+    elif first_word == "volume" and len(parts) > 1 and parts[1].isdigit():
+        page = session.player_page or session.browser_manager.page
+        if page:
+            res = media_control.set_volume(page, int(parts[1]))
+            sys.stdout.write(f"  {res.get('message', 'Volume adjusted.')}\n")
+        else:
+            sys.stdout.write("  No active page or player.\n")
+        sys.stdout.flush()
+        return
+
+    elif first_word == "mute":
+        page = session.player_page or session.browser_manager.page
+        if page:
+            res = media_control.mute_video(page)
+            sys.stdout.write(f"  {res.get('message', 'Mute complete.')}\n")
+        else:
+            sys.stdout.write("  No active page or player.\n")
+        sys.stdout.flush()
+        return
+
+    elif first_word in ("skip-ad", "skip_ad") or (first_word == "skip" and len(parts) > 1 and parts[1].lower() == "ad"):
+        page = session.player_page or session.browser_manager.page
+        if page:
+            res = media_control.skip_ad(page)
+            sys.stdout.write(f"  {res.get('message', 'Skip ad complete.')}\n")
+        else:
+            sys.stdout.write("  No active page or player.\n")
+        sys.stdout.flush()
+        return
+
     elif first_word == "stop":
         session.kill_switch_active.set()
         sys.stdout.write("  [Kill Switch] Active task stopped. Browser remains open.\n")
