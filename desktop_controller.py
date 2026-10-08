@@ -505,7 +505,7 @@ OrionSystem.Healer = SelfHealingResolver            # type: ignore[attr-defined]
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=f"🌌 Orion v{VERSION} \"{CODENAME}\" - Playwright Web Automation Engine"
+        description=f"Orion v{VERSION} \"{CODENAME}\" - Playwright Web Automation Engine"
     )
     subparsers = parser.add_subparsers(dest="command")
 
