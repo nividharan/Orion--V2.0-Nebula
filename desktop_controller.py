@@ -430,7 +430,8 @@ def execute_task(task_spec: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return _removed_web_only()
 
 def run_interactive_console() -> None:
-    print(f"[{PROJECT_NAME}] Interactive console running in web-only mode.")
+    from repl import start_interactive_repl
+    start_interactive_repl()
 
 def run_self_healing_cli() -> Dict[str, Any]:
     return _removed_web_only(healed=False, mode="web_dom")

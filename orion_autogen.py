@@ -961,7 +961,7 @@ def run_nebula_cli():
         run_doctor()
         return
 
-    if not raw_args or raw_args[0] in ("-h", "--help", "help"):
+    if raw_args and raw_args[0] in ("-h", "--help", "help"):
         if nebula_banner:
             sys.stdout.write(nebula_banner.get_nebula_splash())
             sys.stdout.flush()
@@ -969,23 +969,36 @@ def run_nebula_cli():
             print("🌌 Nebula v2.0 (Orion Engine)")
             print("Autonomous Desktop & Chrome Operations\n")
             print("Usage:")
-            print("  nebula \"<goal>\"            (clean, minimal output)")
+            print("  nebula                     (start interactive session mode)")
+            print("  nebula \"<goal>\"            (run goal and enter interactive session)")
+            print("  nebula \"<goal>\" --once     (run goal and exit, closing browser)")
             print("  nebula --verbose \"<goal>\"  (detailed multi-agent telemetry)")
             print("  nebula doctor              (check system health & zero-key status)\n")
-            print("Examples:")
-            print("  nebula \"play kangal neeye on youtube\"")
-            print("  nebula \"open google play and search for free fire\"")
-            print("  nebula \"search github for autogen\"")
+            print("Flags:")
+            print("  --once                     Run command once and exit (closes browser)")
+            print("  --verbose, -v              Enable verbose multi-agent telemetry")
+            print("  --detach, -d               [Deprecated] Interactive mode keeps browser open by default\n")
+        return
+
+    # No args -> Enter interactive session mode
+    from repl import start_interactive_repl
+    if not raw_args:
+        start_interactive_repl()
         return
 
     verbose = False
-    detach = False
+    once_mode = False
+    detach_mode = False
     args = []
     for a in raw_args:
         if a in ("--verbose", "-v"):
             verbose = True
+        elif a in ("--once",):
+            once_mode = True
         elif a in ("--detach", "-d"):
-            detach = True
+            detach_mode = True
+            sys.stdout.write("  [Notice] --detach/-d is deprecated; interactive mode keeps the browser open by default.\n")
+            sys.stdout.flush()
         else:
             args.append(a)
 
@@ -993,29 +1006,27 @@ def run_nebula_cli():
     model = NebulaModel(use_voice=True, minimal=(not verbose))
     result = model.run_collaborative_workflow(goal)
 
-    # -------------------------------------------------------------
-    # Chrome Persistence / Detached Hand-off
-    # -------------------------------------------------------------
-    from web_engine.browser_manager import BrowserManager
-    active_mgr = BrowserManager.get_active()
-    if active_mgr and active_mgr.is_running:
-        page_url = active_mgr.page.url if active_mgr.page else None
-        if not detach and sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
-            try:
-                sys.stdout.write("\n🎶 Chrome is active and playing. Press Enter to keep Chrome open on desktop (or Ctrl+C to stop)...\n")
-                sys.stdout.flush()
-                input()
-                # Hand off to native detached browser so it persists indefinitely
-                if page_url and page_url != "about:blank":
-                    orion_core.launch_detached_browser(page_url)
-                    time.sleep(0.3)
-                    active_mgr.close()
-            except (KeyboardInterrupt, EOFError):
-                active_mgr.close()
-        elif detach and page_url and page_url != "about:blank":
-            orion_core.launch_detached_browser(page_url)
-            time.sleep(0.3)
-            active_mgr.close()
+    if once_mode:
+        from web_engine.browser_manager import BrowserManager
+        mgr = BrowserManager.get_active()
+        if mgr:
+            mgr.close()
+        return
+
+    # If --detach was requested explicitly, perform detached handoff
+    if detach_mode:
+        from web_engine.browser_manager import BrowserManager
+        mgr = BrowserManager.get_active()
+        if mgr and mgr.is_running and mgr.page:
+            url = mgr.page.url
+            if url and url != "about:blank":
+                orion_core.launch_detached_browser(url)
+                time.sleep(0.3)
+                mgr.close()
+        return
+
+    # Default behaviour: Enter interactive REPL with browser staying open
+    start_interactive_repl()
 
 
 if __name__ == "__main__":
