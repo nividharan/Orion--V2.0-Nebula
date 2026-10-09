@@ -202,49 +202,67 @@ class NebulaModel:
             return steps
 
         # -------------------------------------------------------------
-        # 1.5 Blender 3D Workflow Goals: e.g. "open blender and add cube", "render in blender"
+        # 1.5 Galaxy 3D Model: Human-level Blender 3D automation
         # -------------------------------------------------------------
-        if re.search(r'\b(blender|3d\s+model|render\s+scene|add\s+cube|edit\s+mesh|3d\s+viewport)\b', raw, re.I):
+        if re.search(r'\b(galaxy|blender|3d\s+model|render\s+scene|add\s+cube|add\s+sphere|add\s+mesh|3d\s+viewport|orbit\s+viewport)\b', raw, re.I):
+            is_galaxy = "galaxy" in raw.lower() or "sphere" in raw.lower() or "torus" in raw.lower()
+            agent_3d = "Galaxy Model" if is_galaxy else "Blender Executor"
             steps.append({
-                "agent": "Blender Executor",
+                "agent": agent_3d,
                 "action": "launch",
                 "target": "blender",
-                "desc": "Launch and attach to Blender 3D"
+                "desc": "Launch and attach to live Blender GUI"
             })
             steps.append({
-                "agent": "Blender Executor",
+                "agent": agent_3d,
                 "action": "focus",
                 "target": "blender",
-                "desc": "Bring Blender 3D viewport to foreground"
+                "desc": "Focus Blender 3D Viewport in foreground"
             })
-            if re.search(r'\b(add|cube|mesh)\b', raw, re.I):
+            if re.search(r'\b(clear|delete\s+all|clean\s+scene)\b', raw, re.I):
                 steps.append({
-                    "agent": "Blender Executor",
-                    "action": "hotkey",
-                    "keys": ["shift", "a"],
-                    "target": "shift+a",
-                    "desc": "Open 3D Add Menu (Shift+A)"
+                    "agent": agent_3d,
+                    "action": "clear",
+                    "desc": "Clear default scene objects (A -> Delete)"
                 })
-            if re.search(r'\b(render)\b', raw, re.I):
+            if re.search(r'\b(add|cube|sphere|torus|mesh)\b', raw, re.I):
+                mesh_type = "uv_sphere" if "sphere" in raw.lower() else ("torus" if "torus" in raw.lower() else "cube")
+                action_name = "add_mesh" if is_galaxy else "hotkey"
                 steps.append({
-                    "agent": "Blender Executor",
-                    "action": "render",
-                    "target": "f12",
-                    "desc": "Trigger 3D Render Engine (F12)"
+                    "agent": agent_3d,
+                    "action": action_name,
+                    "target": "shift+a",
+                    "keys": ["shift", "a"],
+                    "mesh": mesh_type,
+                    "desc": f"Add 3D {mesh_type} via Shift+A"
+                })
+            if re.search(r'\b(shading|rendered|material)\b', raw, re.I):
+                steps.append({
+                    "agent": agent_3d,
+                    "action": "shading",
+                    "mode": "rendered",
+                    "desc": "Switch 3D Viewport to Rendered Shading (Z)"
                 })
             if re.search(r'\b(orbit|rotate)\b', raw, re.I):
                 steps.append({
-                    "agent": "Blender Executor",
+                    "agent": agent_3d,
                     "action": "orbit",
-                    "dx": 120,
-                    "dy": -40,
-                    "desc": "Orbit 3D Viewport camera"
+                    "dx": 150,
+                    "dy": -60,
+                    "desc": "Orbit 3D Viewport with middle-mouse Bezier drag"
+                })
+            if re.search(r'\b(render)\b', raw, re.I):
+                steps.append({
+                    "agent": agent_3d,
+                    "action": "render",
+                    "target": "f12",
+                    "desc": "Trigger 3D Render Engine (F12)"
                 })
             steps.append({
                 "agent": "Perception Inspector",
                 "action": "shot",
                 "target": None,
-                "desc": "Visually verify 3D Viewport rendered state"
+                "desc": "Screen Watcher: verify 3D Viewport state"
             })
             if self.use_voice:
                 steps.append({
@@ -887,32 +905,41 @@ class NebulaModel:
                                 self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Chrome session closed.")
 
                         # ---------------------------------------------
-                        # BLENDER EXECUTOR (Orion Substrate 3D Worker)
+                        # GALAXY 3D MODEL (Human-level 3D Desktop Agent)
                         # ---------------------------------------------
-                        elif agent in ("Blender Executor", "Blender Model", "3D Executor"):
-                            self.stream.print_line("Blender Executor", "🎨", f"Milestone {idx}: {step['desc']}...")
-                            from orion_desktop import OrionSubstrate
-                            sub = OrionSubstrate()
-                            blender_adapter = sub.get_adapter("blender")
+                        elif agent in ("Galaxy Model", "Galaxy", "Galaxy Executor", "Blender Executor", "Blender Model", "3D Executor"):
+                            self.stream.print_line("Galaxy Model", "🌌", f"Milestone {idx}: {step['desc']}...")
+                            from galaxy import get_galaxy_agent
+                            galaxy = get_galaxy_agent()
 
                             if act == "launch":
-                                blender_adapter.launch()
+                                galaxy.launch()
                             elif act == "focus":
-                                blender_adapter.focus()
-                            elif act == "hotkey":
-                                sub.hotkey(*(step.get("keys") or [target]))
+                                galaxy.focus()
+                            elif act == "clear":
+                                galaxy.select_all_and_delete()
+                            elif act == "add_mesh":
+                                galaxy.add_mesh_primitive(step.get("mesh", "uv_sphere"))
+                            elif act == "shading":
+                                galaxy.set_viewport_shading(step.get("mode", "rendered"))
                             elif act == "orbit":
-                                blender_adapter.orbit(step.get("dx", 120), step.get("dy", -40))
+                                galaxy.orbit_3d_viewport(step.get("dx", 150), step.get("dy", -60))
+                            elif act == "pan":
+                                galaxy.pan_3d_viewport(step.get("dx", 80), step.get("dy", 0))
+                            elif act == "zoom":
+                                galaxy.zoom_3d_viewport(step.get("delta", 3))
                             elif act == "render":
-                                blender_adapter.trigger_render()
+                                galaxy.trigger_render()
+                            elif act == "hotkey":
+                                galaxy.keyboard.hotkey(*(step.get("keys") or [target]))
                             elif act == "type":
-                                sub.type_text(target)
+                                galaxy.keyboard.type_text(target)
                             elif act == "press":
-                                sub.press(target)
+                                galaxy.keyboard.press(target)
 
                             elapsed = (time.perf_counter() - t_step_start) * 1000
-                            self.stream.print_success(f"3D interaction executed: {step['desc']}", elapsed)
-                            self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: 3D command dispatched.")
+                            self.stream.print_success(f"Galaxy 3D action executed: {step['desc']}", elapsed)
+                            self.stream.print_line("Verifier Critic", "⚖️", f"Milestone {idx} verified: Screen Watcher evaluated visual response.")
 
                         # ---------------------------------------------
                         # DESKTOP EXECUTOR (Native Windows Worker)

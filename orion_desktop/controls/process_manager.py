@@ -30,6 +30,9 @@ TRUSTED_APPS: Dict[str, List[str]] = {
         "chrome.exe",
     ],
     "blender": [
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps\blender-launcher.exe"),
+        r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe",
+        r"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe",
         r"C:\Program Files\Blender Foundation\Blender 4.2\blender.exe",
         r"C:\Program Files\Blender Foundation\Blender 4.1\blender.exe",
         r"C:\Program Files\Blender Foundation\Blender 4.0\blender.exe",

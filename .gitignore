@@ -15,17 +15,21 @@ scratch/
 *.log
 *.html
 !tests/fixtures/*.html
+!web_ui/*.html
 .env
 .env.*
 !.env.example
 *.secret
+*.blend1
 
-
-# Media (keep committed asset banners)
+# Media (keep committed asset banners and web_ui assets)
 *.png
 !assets/*
+!web_ui/*
 *.jpg
 !assets/*
+!web_ui/*
+assets/*.blend1
 
 # Plans and design documents (kept in agent brain artifacts, not repo)
 *_PLAN.md

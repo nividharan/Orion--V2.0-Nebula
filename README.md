@@ -3,12 +3,12 @@
 </p>
 
 # 🌌 Orion System × Nebula Model (v2.0)
-### High-Performance Desktop Automation Substrate & Cognitive Chrome Agent Society
+### Universal Desktop Automation Substrate, Autonomous Web Engine & 3D Creative Society
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6.svg)](https://microsoft.com/windows)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB.svg)](https://python.org)
-[![Tests: 305 passing](https://img.shields.io/badge/tests-305%20passing-brightgreen.svg)](#-testing)
+[![Tests: 298 passing](https://img.shields.io/badge/tests-298%20passing-brightgreen.svg)](#-testing)
 
 ---
 
@@ -227,25 +227,32 @@ python orion_autogen.py --send "volume 30"
 Orion--V2.0-Nebula/
 ├── orion_autogen.py          # Main 5-agent society entry point & CLI
 ├── nebula.bat                # Windows interactive session launcher
-├── session.py                # Persistent NebulaSession owner (Playwright worker thread)
-├── repl.py                   # Interactive REPL console (5-turn memory, approvals, built-ins)
-├── media_control.py          # State-aware media player controls & background ad watcher
-├── control_channel.py        # Local 127.0.0.1 token-authenticated IPC control server
-├── desktop_controller.py     # Orion system layer CLI (Orion OS primitives)
-├── nebula_brain.py           # NebulaBrain — AI planning and local parser fallback
-├── schemas.py                # Typed Plan, Step, ActionType, IntentType definitions
-├── input_pipeline.py         # 8-stage input understanding & confidence gating
-├── api_client.py             # YouTube Data API v3 & fallback scraper client
+├── api_server.py            # FastAPI REST & WebSocket Telemetry Gateway
+├── run_app.py               # Standalone Native Desktop Application Launcher
+├── app.bat                  # One-click Windows application starter
+├── galaxy.py                # Galaxy Model: Human-Level 3D Agent for Blender GUI
+├── generate_master_3d_logo.py # Blender 5.2 master 3D logo generator
+├── web_ui/                  # Autonomous Glassmorphic Deck with 3D Three.js viewer
+│   ├── index.html           # Real-time HUD, 3D viewport, perception buffer, ARIA tree
+│   └── orion_logo.glb       # Blender EEVEE-rendered real-time 3D model
+├── orion_desktop/           # Universal OS Substrate (Win32 Keyboard, Bezier Mouse, Watchdog)
+├── session.py               # Deterministic persistent NebulaSession owner
+├── repl.py                  # Interactive REPL console (5-turn memory, approvals, built-ins)
+├── media_control.py         # State-aware media player controls & consent modal handler
+├── control_channel.py       # Local 127.0.0.1 token-authenticated IPC control server
+├── desktop_controller.py    # Orion system layer CLI & smart element interactions
+├── orion_autogen.py         # Multi-Agent Society Router (Nebula Web + Galaxy 3D)
+├── schemas.py               # Typed Plan, Step, ActionType, IntentType, smart click/fill
+├── input_pipeline.py        # 8-stage input understanding & confidence gating
 ├── config.py                 # Paths, atomic writes, cache management, safety guards
 ├── observability.py          # Structured JSON logging, audit metrics, regression runner
 │
-├── web_engine/               # Hardened Playwright engine (stealth, consent, locators)
-├── verify/                   # DOM health checks, modal detection, visual diff verification
-├── resolvers/                # Media search resolver with relevance scoring & caching
-├── tools/                    # Agent tools and SocietyCoordinator
-├── tests/                    # Complete regression test suite (13 modules, 305 tests)
-├── legacy/                   # Archived Win32 desktop modules
-└── logs/                     # Structured JSON audit logs per task
+├── web_engine/              # Hardened Playwright engine (stealth, consent, locators)
+├── verify/                  # Screen Watcher, Freeze Detector, Visual diff verification
+├── resolvers/               # Media search resolver with relevance scoring & caching
+├── tools/                   # Agent tools and SocietyCoordinator
+├── tests/                   # Complete regression test suite (14 modules, 298 tests)
+└── assets/                  # 3D assets and original master artwork
 ```
 
 ---
